@@ -1,0 +1,85 @@
+{
+  "apiVersion": 2,
+  "name": "Organizational Chart Pro",
+  "description": "Professional organizational chart management for Monday.com. Visualize team hierarchies, manage employee data, and create stunning org charts with ease.",
+  "version": "1.0.0",
+  "developer": {
+    "name": "Syncoora",
+    "email": "team@syncoora.com"
+  },
+  "features": [
+    {
+      "name": "Organizational Chart",
+      "description": "Interactive organizational chart with drag-and-drop functionality",
+      "type": "board_view",
+      "icon": "https://cdn.monday.com/icons/apps/icon-org-chart.svg",
+      "url": "https://your-domain.com/monday-app/index.html",
+      "scopes": [
+        "boards:read",
+        "items:read",
+        "boards:write",
+        "items:write"
+      ]
+    },
+    {
+      "name": "Employee List",
+      "description": "Tabular view of all employees with advanced filtering",
+      "type": "board_view",
+      "icon": "https://cdn.monday.com/icons/apps/icon-list.svg",
+      "url": "https://your-domain.com/monday-app/index.html",
+      "scopes": [
+        "boards:read",
+        "items:read",
+        "boards:write",
+        "items:write"
+      ]
+    },
+    {
+      "name": "Dashboard Widget",
+      "description": "Compact organizational chart widget for dashboards",
+      "type": "dashboard_widget",
+      "icon": "https://cdn.monday.com/icons/apps/icon-chart.svg",
+      "url": "https://your-domain.com/monday-app/index.html",
+      "scopes": [
+        "boards:read"
+      ]
+    }
+  ],
+  "supportedFeatures": {
+    "monday.board_views": {
+      "supported": true,
+      "url": "https://your-domain.com/monday-app/index.html"
+    },
+    "monday.dashboard_widgets": {
+      "supported": true,
+      "url": "https://your-domain.com/monday-app/index.html"
+    },
+    "monday.execute": {
+      "supported": true
+    }
+  },
+  "oauth": {
+    "scopes": [
+      "boards:read",
+      "items:read",
+      "boards:write",
+      "items:write",
+      "users:read",
+      "workspaces:read"
+    ]
+  },
+  "webhooks": [],
+  "storage": {
+    "required": false
+  }
+}
+
+
+
+
+
+
+
+
+
+
