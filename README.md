@@ -1,43 +1,6 @@
-# Organizational Chart Pro
+# Organizational Chart App
 
-A modern, responsive organizational chart application built with React that integrates seamlessly with Monday.com to manage your company's employee hierarchy with ease.
-
-## 🚀 Monday.com Deployment
-
-This app is specifically designed to work as a Monday.com app. Follow these steps to deploy it:
-
-### Prerequisites
-- A Monday.com developer account
-- A web hosting service (Netlify, Vercel, AWS S3, etc.)
-- Node.js and npm installed locally
-
-### Quick Deployment Steps
-
-1. **Build the app for production:**
-   ```bash
-   npm install
-   npm run build
-   ```
-
-2. **Upload the `build` folder** to your web hosting service
-
-3. **Create a Monday.com app:**
-   - Go to [Monday.com Developers](https://developer.monday.com/)
-   - Create a new app
-   - Upload the `monday.json` file from this project
-   - Set the app URL to your hosted app URL
-
-4. **Configure OAuth scopes:**
-   - `boards:read` - Read board data
-   - `items:read` - Read board items
-   - `users:read` - Read user information
-
-### Development Mode
-
-The app includes a development mode with mock data for testing:
-- Press `Ctrl+M` to trigger mock context
-- Press `Ctrl+L/D/N` to switch themes
-- Mock data loads automatically after 3 seconds
+A modern, responsive organizational chart application built with React that allows you to manage your company's employee hierarchy with ease.
 
 ## Features
 
@@ -70,12 +33,6 @@ The app includes a development mode with mock data for testing:
 - Local storage integration to save your organizational data
 - Automatic data persistence between sessions
 - Sample data included for immediate testing
-
-### 🔗 **Monday.com Integration**
-- Automatic theme synchronization (light/dark mode)
-- Real-time data loading from Monday.com boards
-- Support for Monday.com's People, Status, and Text columns
-- Context-aware theming and styling
 
 ## Getting Started
 
@@ -153,7 +110,6 @@ Each employee object contains:
 
 ### Built With
 - **React 19** - Frontend framework
-- **Monday.com SDK** - Monday.com platform integration
 - **Lucide React** - Modern icon library
 - **CSS3** - Custom styling with modern design patterns
 - **Local Storage** - Data persistence

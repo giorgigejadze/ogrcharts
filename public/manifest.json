@@ -1,7 +1,6 @@
 {
-  "short_name": "OrgChart Pro",
-  "name": "Organizational Chart Pro",
-  "description": "Professional organizational chart management for Monday.com",
+  "short_name": "React App",
+  "name": "Create React App Sample",
   "icons": [
     {
       "src": "favicon.ico",
@@ -21,8 +20,6 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#2563eb",
-  "background_color": "#ffffff",
-  "scope": "/",
-  "orientation": "any"
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
 }

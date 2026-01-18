@@ -2,20 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { X, User, Mail, Phone, Building, UserCheck } from 'lucide-react';
 import './EmployeeForm.css';
 
-const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, isUploadingImage }) => {
+const EmployeeForm = ({ employee, employees, onSubmit, onCancel, dataSource = 'local' }) => {
   const [formData, setFormData] = useState({
     name: '',
     position: '',
     department: '',
     email: '',
     phone: '',
-    managerId: ''
+    managerId: '',
+    image: null
   });
 
   const [customFields, setCustomFields] = useState([]);
   const [defaultFields, setDefaultFields] = useState({});
   const [requiredFields, setRequiredFields] = useState({});
   const [errors, setErrors] = useState({});
+  const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
 
   // Load custom fields and default fields from localStorage
@@ -102,7 +104,8 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
       department: randomDepartment,
       email: randomEmail,
       phone: randomPhone,
-      managerId: ''
+      managerId: '',
+      image: null
     };
   };
 
@@ -115,7 +118,8 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
         department: employee.department || '',
         email: employee.email || '',
         phone: employee.phone || '',
-        managerId: employee.managerId ? employee.managerId.toString() : ''
+        managerId: employee.managerId ? employee.managerId.toString() : '',
+        image: employee.image || null
       };
       
       // Add custom fields from employee data
@@ -124,8 +128,6 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
       });
       
       setFormData(employeeData);
-      // Set image preview if employee has image
-      setImagePreview(employee.image || null);
     } else {
       // Fill with random data for new employees
       const randomData = generateRandomEmployee();
@@ -148,23 +150,18 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
       newErrors.name = 'Name is required';
     }
 
-    if (defaultFields.position && requiredFields.position && !formData.position.trim()) {
+    if (defaultFields.position && requiredFields.position && dataSource !== 'monday' && !formData.position.trim()) {
       newErrors.position = 'Position is required';
     }
 
-    if (defaultFields.department && requiredFields.department && !formData.department.trim()) {
+    if (defaultFields.department && requiredFields.department && dataSource !== 'monday' && !formData.department.trim()) {
       newErrors.department = 'Department is required';
     }
 
     if (defaultFields.email && requiredFields.email && !formData.email.trim()) {
       newErrors.email = 'Email is required';
-    } else if (defaultFields.email && formData.email.trim()) {
-      // Improved regex that supports Unicode characters (including Georgian) in email local part
-      // Allows any Unicode characters before @, then standard domain format
-      const emailRegex = /^[\p{L}\p{N}._+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}$/u;
-      if (!emailRegex.test(formData.email)) {
-        newErrors.email = 'Email is invalid';
-      }
+    } else if (defaultFields.email && formData.email.trim() && !/\S+@\S+\.\S+/.test(formData.email)) {
+      newErrors.email = 'Email is invalid';
     }
 
     if (defaultFields.phone && requiredFields.phone && !formData.phone.trim()) {
@@ -179,10 +176,7 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
       
       // Validate email type custom fields
       if (defaultFields[field.name] && field.type === 'email' && formData[field.name]?.trim()) {
-        // Improved regex that supports Unicode characters (including Georgian) in email local part
-        // Allows any Unicode characters before @, then standard domain format
-        const emailRegex = /^[\p{L}\p{N}._+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}$/u;
-        if (!emailRegex.test(formData[field.name])) {
+        if (!/\S+@\S+\.\S+/.test(formData[field.name])) {
           newErrors[field.name] = `${field.name} is invalid`;
         }
       }
@@ -224,6 +218,50 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
     }
   };
 
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        setErrors(prev => ({
+          ...prev,
+          image: 'Please select a valid image file'
+        }));
+        return;
+      }
+
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setErrors(prev => ({
+          ...prev,
+          image: 'Image size must be less than 5MB'
+        }));
+        return;
+      }
+
+      setImageFile(file);
+      setFormData(prev => ({
+        ...prev,
+        image: file
+      }));
+
+      // Create preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImagePreview(e.target.result);
+      };
+      reader.readAsDataURL(file);
+
+      // Clear any previous errors
+      if (errors.image) {
+        setErrors(prev => ({
+          ...prev,
+          image: ''
+        }));
+      }
+    }
+  };
+
   const getAvailableManagers = () => {
     if (!employee) return employees;
     
@@ -253,57 +291,6 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
 
       <form onSubmit={handleSubmit}>
         <div className="form-content">
-          {/* Image Upload Section */}
-          {employee && onImageUpload && (
-            <div className="form-group image-upload-group">
-              <label>
-                <User size={16} />
-                Photo
-              </label>
-              <div className="image-upload-container">
-                <div className="image-preview">
-                  {imagePreview ? (
-                    <img src={imagePreview} alt="Employee" />
-                  ) : (
-                    <div className="image-placeholder">
-                      {formData.name ? formData.name.split(' ').map(n => n[0]).join('') : '?'}
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="change-photo-btn"
-                  onClick={() => document.getElementById('employee-image-upload-input').click()}
-                  disabled={isUploadingImage}
-                >
-                  {isUploadingImage ? 'Uploading...' : 'Change Photo'}
-                </button>
-                <input
-                  id="employee-image-upload-input"
-                  type="file"
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  onChange={async (e) => {
-                    const file = e.target.files[0];
-                    if (file && employee && onImageUpload) {
-                      // Show preview immediately
-                      const reader = new FileReader();
-                      reader.onload = (event) => {
-                        setImagePreview(event.target.result);
-                      };
-                      reader.readAsDataURL(file);
-                      
-                      // Upload to Monday.com
-                      await onImageUpload(employee, file);
-                      // Reset input
-                      e.target.value = '';
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          )}
-          
           <div className="form-grid">
             {defaultFields.name && (
               <div className="form-group">
@@ -324,7 +311,7 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
               </div>
             )}
 
-            {defaultFields.position && (
+            {defaultFields.position && dataSource !== 'monday' && (
               <div className="form-group">
                 <label htmlFor="position">
                   <UserCheck size={16} />
@@ -343,7 +330,7 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
               </div>
             )}
 
-            {defaultFields.department && (
+            {defaultFields.department && dataSource !== 'monday' && (
               <div className="form-group">
                 <label htmlFor="department">
                   <Building size={16} />
@@ -369,7 +356,7 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
                   Email {requiredFields.email && <span className="required-asterisk">*</span>}
                 </label>
                 <input
-                  type="text"
+                  type="email"
                   id="email"
                   name="email"
                   value={formData.email}
@@ -448,7 +435,7 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
                     )}
                     {field.type === 'email' && (
                       <input
-                        type="text"
+                        type="email"
                         id={field.name}
                         name={field.name}
                         value={formData[field.name] || ''}
@@ -511,6 +498,44 @@ const EmployeeForm = ({ employee, employees, onSubmit, onCancel, onImageUpload, 
               ))}
             </div>
           )}
+
+          {/* Image Upload Section */}
+          <div className="image-upload-section">
+            <div className="form-group">
+              <label>
+                <User size={16} />
+                Employee Image
+              </label>
+              <div className="image-upload-container">
+                {imagePreview || formData.image ? (
+                  <div className="image-preview">
+                    <img
+                      src={imagePreview || (typeof formData.image === 'string' ? formData.image : URL.createObjectURL(formData.image))}
+                      alt="Employee preview"
+                      className="preview-image"
+                    />
+                  </div>
+                ) : (
+                  <div className="image-placeholder">
+                    <User size={48} />
+                  </div>
+                )}
+                <div className="image-controls">
+                  <input
+                    type="file"
+                    id="image-upload"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    style={{ display: 'none' }}
+                  />
+                  <label htmlFor="image-upload" className="change-image-btn">
+                    Change Image
+                  </label>
+                </div>
+              </div>
+              {errors.image && <span className="error-message">{errors.image}</span>}
+            </div>
+          </div>
         </div>
 
         <div className="form-actions">

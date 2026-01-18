@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Palette, List, Save, Edit, ChevronUp, ChevronDown } from 'lucide-react';
 import './Settings.css';
 
-const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings, onDesignSettingsChange, mondayBoardId, monday }) => {
+const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings, onDesignSettingsChange }) => {
   const [customFields, setCustomFields] = useState([]);
 
   // Use designSettings from props, with fallback to defaults
@@ -138,105 +138,10 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
     setRequiredFields(updatedRequiredFields);
   }, [customFields]);
 
-  // Helper function to create column in Monday.com
-  const createColumnInMonday = async (fieldName, fieldType, options = []) => {
-    if (!mondayBoardId || !monday) {
-      return null;
-    }
-
-    try {
-      // Map custom field type to Monday.com column type
-      let mondayColumnType = 'text';
-      let defaultsJson = '{}';
-
-      switch (fieldType) {
-        case 'email':
-          mondayColumnType = 'email';
-          break;
-        case 'phone':
-          mondayColumnType = 'phone';
-          break;
-        case 'dropdown':
-          mondayColumnType = 'dropdown';
-          // Convert options array to Monday.com labels format
-          // Monday.com expects labels as an object with numeric IDs and text values
-          // Format: { "1": "Option 1", "2": "Option 2", ... }
-          const labels = {};
-          options.forEach((option, index) => {
-            labels[String(index + 1)] = String(option); // Start from 1, ensure string keys
-          });
-          // For dropdown, we need to use settings_str format
-          // The settings_str should contain: { "labels": { "1": "Option 1", ... } }
-          const settings = { labels };
-          defaultsJson = JSON.stringify(settings);
-          break;
-        case 'number':
-          mondayColumnType = 'numbers';
-          break;
-        case 'date':
-          mondayColumnType = 'date';
-          break;
-        default:
-          mondayColumnType = 'text';
-      }
-
-      // Create column mutation
-      const mutation = `mutation {
-        create_column(
-          board_id: ${mondayBoardId},
-          title: ${JSON.stringify(fieldName)},
-          column_type: ${JSON.stringify(mondayColumnType)},
-          defaults: ${defaultsJson}
-        ) {
-          id
-          title
-          type
-        }
-      }`;
-
-      const response = await monday.api(mutation);
-
-      if (response.data && response.data.create_column) {
-        console.log('✅ Column created in Monday.com:', {
-          id: response.data.create_column.id,
-          title: response.data.create_column.title,
-          type: response.data.create_column.type
-        });
-        return response.data.create_column.id;
-      }
-
-      if (response.errors) {
-        console.error('❌ Monday.com API error creating column:', response.errors);
-      }
-
-      return null;
-    } catch (error) {
-      console.error('❌ Error creating column in Monday.com:', error.message);
-      return null;
-    }
-  };
-
-  const addCustomField = async () => {
+  const addCustomField = () => {
     if (isFieldReadyToAdd()) {
-      // Create column in Monday.com if board ID is available
-      let mondayColumnId = null;
-      if (mondayBoardId && monday) {
-        try {
-          mondayColumnId = await createColumnInMonday(newField.name, newField.type, newField.options);
-          if (!mondayColumnId) {
-            alert('Failed to create column in Monday.com. The field will be saved locally only.');
-          }
-        } catch (error) {
-          console.error('❌ Error creating column in Monday.com:', error);
-          alert('Failed to create column in Monday.com. The field will be saved locally only.');
-        }
-      }
       
-      const newFieldWithId = { 
-        ...newField, 
-        id: Date.now(),
-        mondayColumnId: mondayColumnId // Store Monday.com column ID
-      };
+      const newFieldWithId = { ...newField, id: Date.now() };
       setCustomFields([...customFields, newFieldWithId]);
 
       // Update required fields to sync with the new custom field's required property

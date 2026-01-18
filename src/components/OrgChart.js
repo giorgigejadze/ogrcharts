@@ -386,6 +386,8 @@ const OrgChart = ({
   onEditEmployee,
   onDeleteEmployee,
   onViewEmployee,
+  isStandaloneMode = false,
+  mondayDataLoaded = false,
   designSettings = {
     cardStyle: 'rounded',
     avatarSize: 'medium',
@@ -491,13 +493,6 @@ const OrgChart = ({
       setNodes(nodes);
       setEdges(edges);
       nodesInitializedRef.current = true;
-      
-      // Auto-organize after initial load
-      setTimeout(() => {
-        if (reactFlowInstanceRef.current && flowNodes.length > 0) {
-          handleOrganize();
-        }
-      }, 800);
     } else if (nodesInitializedRef.current) {
       // Already initialized
     }
@@ -575,6 +570,17 @@ const OrgChart = ({
       setEdges(edges);
     }
   }, [edges, setEdges]);
+
+  // Automatically organize and fit view after Monday.com data is loaded and organized
+  useEffect(() => {
+    if (mondayDataLoaded && nodesInitializedRef.current && employees.length > 0 && flowNodes.length > 0) {
+      // Longer delay to ensure all data processing is complete
+      const timeoutId = setTimeout(() => {
+        handleOrganize();
+      }, 500);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [mondayDataLoaded, employees.length, flowNodes.length, nodesInitializedRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Edge styling is now handled by custom edge components
 
@@ -804,18 +810,6 @@ const OrgChart = ({
       }, 500);
     }
   };
-
-  // Auto-organize when employees/nodes change
-  useEffect(() => {
-    if (reactFlowInstanceRef.current && flowNodes.length > 0 && nodesInitializedRef.current && employees.length > 0) {
-      // Small delay to ensure everything is ready
-      const timeoutId = setTimeout(() => {
-        handleOrganize();
-      }, 500);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [employees.length, flowNodes.length, employees]); // Trigger when employees array changes (not just length)
 
   // Restore viewport and positions when React Flow is ready
   useEffect(() => {

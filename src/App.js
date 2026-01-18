@@ -6,6 +6,8 @@ import EmployeeList from './components/EmployeeList';
 import ImportExport from './components/ImportExport';
 import Settings from './components/Settings';
 import { Plus, Users, Settings as SettingsIcon, Sun, Moon, Download, Palette, List, X, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import mondaySdk from "monday-sdk-js";
+const monday = mondaySdk();
 
 function App() {
   const [employees, setEmployees] = useState([]);
@@ -28,6 +30,10 @@ function App() {
   const [employeeToDelete, setEmployeeToDelete] = useState(null);
   const [showSubordinatesError, setShowSubordinatesError] = useState(false);
   const [employeeWithSubordinates, setEmployeeWithSubordinates] = useState(null);
+  const [isStandaloneMode, setIsStandaloneMode] = useState(false);
+  const [mondayDataLoaded, setMondayDataLoaded] = useState(false);
+  const [boardId, setBoardId] = useState(null);
+  const [columnMappings, setColumnMappings] = useState({});
   const [designSettings, setDesignSettings] = useState({
     cardStyle: 'rounded',
     avatarSize: 'medium',
@@ -43,33 +49,6 @@ function App() {
   const viewDropdownRef = useRef(null);
   const settingsDropdownRef = useRef(null);
   const orgChartRef = useRef(null);
-  const lastSyncTimeRef = useRef(0);
-
-  // Monday.com related state
-  const [mondayBoardId, setMondayBoardId] = useState(null);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [mondayColumnMapping, setMondayColumnMapping] = useState({});
-  const [fieldNameToColumnId, setFieldNameToColumnId] = useState({});
-  const [columnIdToType, setColumnIdToType] = useState({});
-  const [managerColumnInfo, setManagerColumnInfo] = useState(null);
-  const [departmentColumnInfo, setDepartmentColumnInfo] = useState(null);
-  const [imageColumnId, setImageColumnId] = useState(null);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
-
-  // Monday.com SDK reference (will be set when available)
-  const [monday, setMonday] = useState(null);
-
-  // Helper function to find column ID by title
-  const findColumnIdByTitle = (title) => {
-    if (!title || !mondayColumnMapping) return null;
-    const lowerTitle = title.toLowerCase().trim();
-    for (const [id, colTitle] of Object.entries(mondayColumnMapping)) {
-      if (colTitle && colTitle.toLowerCase().trim() === lowerTitle) {
-        return id;
-      }
-    }
-    return null;
-  };
 
   useEffect(() => {
     const savedEmployees = localStorage.getItem('employees');
@@ -79,27 +58,10 @@ function App() {
     setTheme(savedTheme);
     document.documentElement.setAttribute('data-theme', savedTheme);
     
-    // Load saved employees if they exist
-    if (savedEmployees) {
-      try {
-        const parsedEmployees = JSON.parse(savedEmployees);
-        if (parsedEmployees && parsedEmployees.length > 0) {
-          setEmployees(parsedEmployees);
-        } else {
-          // If saved employees array is empty, generate sample data
-          generateAndSetSampleEmployees();
-        }
-      } catch (error) {
-        console.error('Error parsing saved employees:', error);
-        // If parsing fails, generate sample data
-        generateAndSetSampleEmployees();
-      }
-    } else {
-      // If no saved employees, generate sample data
-      generateAndSetSampleEmployees();
-    }
+    // if (savedEmployees) {
+    //   setEmployees(JSON.parse(savedEmployees));
+    // }
 
-    // Initialize design settings
     if (savedDesignSettings) {
       const parsedSettings = JSON.parse(savedDesignSettings);
       // Merge with default settings to ensure new properties are included
@@ -115,10 +77,8 @@ function App() {
         edgeWidth: 3
       };
       setDesignSettings({ ...defaultSettings, ...parsedSettings });
-    }
-
-    // Helper function to generate and set sample employees
-    function generateAndSetSampleEmployees() {
+    } else {
+      // Initialize with 20 sample employees
       const generateSampleEmployees = () => {
         const names = [
           'John Smith', 'Sarah Johnson', 'Mike Davis', 'Lisa Chen', 'David Wilson',
@@ -251,19 +211,6 @@ function App() {
       setEmployees(sampleEmployees);
       localStorage.setItem('employees', JSON.stringify(sampleEmployees));
     }
-
-    // Initialize Monday.com SDK if available
-    if (window.monday) {
-      setMonday(window.monday);
-      // Get context and board info
-      window.monday.get('context').then((context) => {
-        if (context && context.boardId) {
-          setMondayBoardId(context.boardId);
-        }
-      }).catch((error) => {
-        console.warn('Monday.com context not available:', error);
-      });
-    }
   }, []);
 
   // Save employees to localStorage whenever employees change
@@ -331,6 +278,81 @@ function App() {
     };
   }, [showForm, showSettingsModal, showViewPopup]);
 
+  // Monday.com SDK context listener with ngrok support
+  useEffect(() => {
+    // Delay SDK initialization to avoid timing issues
+    const initializeSDK = () => {
+      // First, let's check if monday SDK is available
+      if (typeof monday !== 'undefined' && monday.get) {
+        try {
+          // Check if we're in monday.com environment
+          monday.get('context').then((context) => {
+
+            // Apply initial theme from monday.com context
+            if (context && context.data && context.data.theme) {
+              const mondayTheme = context.data.theme;
+              // Convert monday.com themes to app themes
+              // light = light mode, dark/night = dark mode
+              if (mondayTheme === "light") {
+                setTheme("light");
+              } else {
+                // Both "dark" and "night" should result in dark mode
+                setTheme("dark");
+              }
+            }
+
+            return context;
+          }).catch((error) => {
+            return null;
+          }).then((context) => {
+            // Set up context listener
+            if (monday.listen) {
+              monday.listen("context", (res) => {
+                // Apply theme from monday.com context
+                if (res && res.data && res.data.theme) {
+                  const mondayTheme = res.data.theme;
+                  // Convert monday.com themes to app themes
+                  // light = light mode, dark/night = dark mode
+                  if (mondayTheme === "light") {
+                    setTheme("light");
+                  } else {
+                    // Both "dark" and "night" should result in dark mode
+                    setTheme("dark");
+                  }
+                }
+              });
+            }
+
+            // If we have context, use it
+            if (context) {
+              // Store board ID for future API calls
+              if (context.data && context.data.boardId) {
+                setBoardId(context.data.boardId);
+                loadEmployeesFromBoard(context.data.boardId);
+              }
+            } else {
+              // Enable development mode with mock context
+              setIsStandaloneMode(true);
+              setMondayDataLoaded(false); // Reset Monday data flag in standalone mode
+              enableDevelopmentMode();
+            }
+          });
+        } catch (error) {
+          setIsStandaloneMode(true);
+          setMondayDataLoaded(false); // Reset Monday data flag on error
+          enableDevelopmentMode();
+        }
+      } else {
+        // Enable development mode even without SDK
+        setIsStandaloneMode(true);
+        setMondayDataLoaded(false); // Reset Monday data flag without SDK
+        enableDevelopmentMode();
+      }
+    };
+
+    // Initialize after a longer delay to ensure SDK is fully loaded
+    setTimeout(initializeSDK, 500);
+  }, []);
 
   // Development mode helper for ngrok testing
   const enableDevelopmentMode = () => {
@@ -390,9 +412,14 @@ function App() {
                         photo_small: null
                       }]
                     })},
-                    { id: 'position', text: 'CEO' },
-                    { id: 'department', text: 'Executive' },
-                    { id: 'phone', text: '+995-555-123456' }
+                    { id: 'position', text: 'პოზიცია' },  // Georgian title
+                    { id: 'dept', text: 'განყოფილება' }, // Different ID, Georgian title
+                    { id: 'telephone', text: 'ტელეფონი' }, // Different ID, Georgian title
+                    { id: 'office_location', text: 'ოფისი' }, // Different ID, Georgian title
+                    { id: 'employment_start', text: 'დასაქმების თარიღი' }, // Different ID, Georgian title
+                    { id: 'compensation', text: 'ანაზღაურება' }, // Different ID, Georgian title
+                    { id: 'work_experience', text: 'სამუშაო გამოცდილება', type: 'numbers' }, // Different ID, Georgian title
+                    { id: 'performance_level', text: 'შესრულების დონე', type: 'status' } // Status column with Georgian title
                   ]
                 },
                 {
@@ -410,10 +437,15 @@ function App() {
                         photo_small: null
                       }]
                     })},
-                    { id: 'position', text: 'CTO' },
-                    { id: 'department', text: 'Technology' },
-                    { id: 'phone', text: '+995-555-123457' },
-                    { id: 'manager', text: 'გიორგი ბერიძე' }
+                    { id: 'job_title', text: 'ტექნიკური დირექტორი' }, // Different ID, Georgian title
+                    { id: 'division', text: 'ტექნოლოგიები' }, // Different ID, Georgian title
+                    { id: 'mobile_phone', text: 'მობილური ტელეფონი' }, // Different ID, Georgian title
+                    { id: 'supervisor', text: 'გიორგი ბერიძე' }, // Different ID
+                    { id: 'work_location', text: 'სამუშაო ადგილი' }, // Different ID, Georgian title
+                    { id: 'hire_date', text: 'დასაქმების თარიღი' }, // Different ID, Georgian title
+                    { id: 'monthly_pay', text: 'თვიური ხელფასი' }, // Different ID, Georgian title
+                    { id: 'years_experience', text: 'გამოცდილების წლები', type: 'numbers' }, // Different ID, Georgian title
+                    { id: 'contract_type', text: 'ხელშეკრულების ტიპი', type: 'status' } // Status column
                   ]
                 },
                 {
@@ -434,7 +466,13 @@ function App() {
                     { id: 'position', text: 'Senior Developer' },
                     { id: 'department', text: 'Technology' },
                     { id: 'phone', text: '+995-555-123458' },
-                    { id: 'manager', text: 'მარიამი კობახიძე' }
+                    { id: 'manager', text: 'მარიამი კობახიძე' },
+                    { id: 'location', text: 'Tbilisi' },
+                    { id: 'start_date', text: '2021-06-01' },
+                    { id: 'salary', text: '35000' },
+                    { id: 'experience_years', text: '8', type: 'numbers' },
+                    { id: 'performance_rating', text: '4.5', type: 'rating' },
+                    { id: 'employment_status', text: 'Full-time', type: 'status' }
                   ]
                 },
                 {
@@ -595,14 +633,6 @@ function App() {
       }
     });
 
-    // Auto-trigger a context event after 3 seconds for testing
-    setTimeout(() => {
-      window.mondayDev.triggerContext();
-      // Also load employees from the mock board
-      setTimeout(() => {
-        loadEmployeesFromBoard(12345);
-      }, 1000);
-    }, 3000);
   };
 
   // Context menu event listeners
@@ -631,594 +661,23 @@ function App() {
     };
   }, []);
 
-  // Create employee in Monday.com
-  const createEmployeeInMonday = async (employee) => {
-    console.log('🔍 createEmployeeInMonday called for employee:', employee);
-
-    if (!mondayBoardId) {
-      console.warn('⚠️ No Monday.com board ID, skipping create');
-      return null;
-    }
-
-    try {
-      console.log('🔍 Starting Monday.com employee creation...');
-      // Find column IDs from mapping (don't use fallback strings - they won't work)
-      const positionColumnId = findColumnIdByTitle('position');
-      const departmentColumnId = findColumnIdByTitle('department');
-      const emailColumnId = findColumnIdByTitle('email');
-      const phoneColumnId = findColumnIdByTitle('phone') || findColumnIdByTitle('mobile');
-      const managerColumnId = findColumnIdByTitle('manager') || findColumnIdByTitle('reports_to');
-
-      // Get manager name if exists
-      const managerName = employee.managerId ? getEmployeeNameById(employee.managerId) : '';
-
-      // Build column values JSON
-      const columnValues = {};
-
-      // Position column - Monday.com API requires JSON format {"text": "value"} for all text columns
-      if (positionColumnId && employee.position) {
-        // Each value must be a JSON string
-        columnValues[positionColumnId] = JSON.stringify({ text: employee.position });
-      }
-
-      // Department column - handle dropdown or text type
-      if (departmentColumnId && employee.department) {
-        if (departmentColumnInfo && departmentColumnInfo.type === 'dropdown' && departmentColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = departmentColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-
-          // Try to find exact match (case-insensitive)
-          for (const [id, text] of Object.entries(labels)) {
-            const textStr = String(text || '');
-            const departmentStr = String(employee.department || '');
-
-            if (textStr === departmentStr || textStr.toLowerCase() === departmentStr.toLowerCase()) {
-              labelId = parseInt(id);
-              labelText = textStr;
-              break;
-            }
-          }
-
-          if (labelId !== null) {
-            // Use label ID (preferred) - value must be JSON string
-            columnValues[departmentColumnId] = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback - value must be JSON string
-            columnValues[departmentColumnId] = JSON.stringify({ labels: [labelText] });
-          }
-          // If no match found, skip setting department column
-        } else {
-          // Text column - value must be JSON string
-          columnValues[departmentColumnId] = JSON.stringify({ text: employee.department });
-        }
-      }
-
-      // Email column
-      if (emailColumnId && employee.email) {
-        // Value must be JSON string
-        columnValues[emailColumnId] = JSON.stringify({ email: employee.email });
-      }
-
-      // Phone column
-      if (phoneColumnId && employee.phone) {
-        // Value must be JSON string
-        columnValues[phoneColumnId] = JSON.stringify({ phone: employee.phone, countryShortName: 'US' });
-      }
-
-      // Manager column - handle dropdown or text type
-      if (managerColumnId && managerName) {
-        if (managerColumnInfo && managerColumnInfo.type === 'dropdown' && managerColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = managerColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-
-          // Try to find exact match (case-insensitive)
-          for (const [id, text] of Object.entries(labels)) {
-            // Ensure both text and managerName are strings
-            const textStr = String(text || '');
-            const managerNameStr = String(managerName || '');
-
-            if (textStr === managerNameStr || textStr.toLowerCase() === managerNameStr.toLowerCase()) {
-              labelId = parseInt(id);
-              labelText = textStr;
-              break;
-            }
-          }
-
-          if (labelId !== null) {
-            // Use label ID (preferred) - value must be JSON string
-            columnValues[managerColumnId] = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback - value must be JSON string
-            columnValues[managerColumnId] = JSON.stringify({ labels: [labelText] });
-          }
-          // If no match found, skip setting manager column
-        } else {
-          // Text column - value must be JSON string
-          columnValues[managerColumnId] = JSON.stringify({ text: managerName });
-        }
-      }
-
-      // Handle custom fields - iterate through all employee properties
-      const standardFields = ['id', 'mondayItemId', 'name', 'position', 'department', 'email', 'phone', 'managerId', 'managerName', 'image'];
-
-      for (const [fieldName, fieldValue] of Object.entries(employee)) {
-        // Skip standard fields
-        if (standardFields.includes(fieldName)) continue;
-
-        // Skip empty values
-        if (!fieldValue || (typeof fieldValue === 'string' && !fieldValue.trim())) continue;
-
-        // Find Monday.com column ID for this field
-        let columnId = fieldNameToColumnId[fieldName];
-
-        // If not found in mapping, try to find by title (case-insensitive, partial match)
-        if (!columnId) {
-          // Try exact match first (sanitized title)
-          let entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-            const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-            return sanitizedTitle === fieldName;
-          });
-
-          // If not found, try case-insensitive partial match
-          if (!entry) {
-            entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-              const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-              const fieldNameLower = fieldName.toLowerCase();
-              return sanitizedTitle.includes(fieldNameLower) || fieldNameLower.includes(sanitizedTitle);
-            });
-          }
-
-          if (entry) {
-            columnId = entry[0];
-          }
-        }
-
-        // If found a column, set the value
-        if (columnId) {
-          // Determine column type and format value accordingly
-          const columnType = columnIdToType[columnId];
-
-          if (columnType === 'text') {
-            columnValues[columnId] = JSON.stringify({ text: String(fieldValue) });
-          } else if (columnType === 'numbers') {
-            columnValues[columnId] = JSON.stringify({ number: parseFloat(fieldValue) || 0 });
-          } else {
-            // Default to text for unknown types
-            columnValues[columnId] = JSON.stringify({ text: String(fieldValue) });
-          }
-        } else {
-          console.warn('⚠️ Custom field not found in Monday.com:', {
-            fieldName,
-            fieldValue,
-            availableColumns: Object.keys(mondayColumnMapping).map(id => ({ id, title: mondayColumnMapping[id] }))
-          });
-        }
-      }
-
-      // Convert columnValues object to the format expected by Monday.com API
-      // Monday.com API expects column_values as a JSON object where each value is a JSON object
-      // Convert JSON strings to objects (like updateEmployeeInMonday does)
-      const columnValuesObj = {};
-      for (const [columnId, jsonString] of Object.entries(columnValues)) {
-        try {
-          columnValuesObj[columnId] = JSON.parse(jsonString);
-        } catch (e) {
-          console.warn('⚠️ Failed to parse JSON string for column:', columnId, jsonString);
-          // If parsing fails, try to use as-is
-          columnValuesObj[columnId] = jsonString;
-        }
-      }
-
-      // Use Monday.com SDK's monday.api() method which handles token automatically
-      // Convert JSON strings to objects for JSON! type variable (like updateEmployeeInMonday)
-      const mutation = `mutation ($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
-        create_item(
-          board_id: $boardId,
-          item_name: $itemName,
-          column_values: $columnValues
-        ) {
-          id
-          name
-        }
-      }`;
-
-      const variables = {
-        boardId: String(mondayBoardId),
-        itemName: employee.name,
-        columnValues: columnValuesObj  // Pass raw object (like updateEmployeeInMonday)
-      };
-
-      console.log('🔍 Creating item with column values, variables:', variables);
-
-      // Use SDK's monday.api() which handles token automatically
-      console.log('🔍 Using Monday.com SDK to create employee...');
-      const response = await monday.api(mutation, { variables });
-
-      if (response.errors) {
-        console.error('❌ Monday.com API error:', response.errors);
-        const errorMessage = response.errors[0]?.message || 'GraphQL validation errors';
-        alert('Failed to create employee in Monday.com: ' + errorMessage);
-        throw new Error(errorMessage);
-      } else {
-        // Create item without column values if no columns found
-        const mutation = `mutation ($boardId: ID!, $itemName: String!) {
-          create_item(
-            board_id: $boardId,
-            item_name: $itemName
-          ) {
-            id
-            name
-          }
-        }`;
-
-        const variables = {
-          boardId: String(mondayBoardId),
-          itemName: employee.name
-        };
-
-        console.log('🔍 Creating item without column values, variables:', variables);
-
-        // Use SDK's monday.api() which handles token automatically
-        console.log('🔍 Using Monday.com SDK to create employee (no column values)...');
-        response = await monday.api(mutation, { variables });
-      }
-
-      if (response && response.data && response.data.create_item) {
-        const itemId = response.data.create_item.id;
-        console.log('✅ createEmployeeInMonday completed successfully, returning item ID:', itemId);
-        return itemId;
-      }
-
-      if (response && response.errors) {
-        console.error('❌ Monday.com API error:', response.errors);
-      }
-
-      console.warn('⚠️ createEmployeeInMonday: No item ID in response');
-      return null;
-    } catch (error) {
-      console.error('❌ Error creating employee in Monday.com:', error);
-      console.error('❌ Error stack:', error.stack);
-      // Don't show alert here - it's already shown in the fetch error handling above
-      // Return null to allow the employee to be added locally even if Monday.com sync fails
-      return null;
-    }
-  };
-
-  // Update employee in Monday.com
-  const updateEmployeeInMonday = async (employee) => {
-    if (!mondayBoardId || !employee.mondayItemId) {
-      return;
-    }
-
-    try {
-      // Find column IDs from mapping (don't use fallback strings - they won't work)
-      const positionColumnId = findColumnIdByTitle('position');
-      const departmentColumnId = findColumnIdByTitle('department');
-      const emailColumnId = findColumnIdByTitle('email');
-      const phoneColumnId = findColumnIdByTitle('phone') || findColumnIdByTitle('mobile');
-      const managerColumnId = findColumnIdByTitle('manager') || findColumnIdByTitle('reports_to');
-
-      // Get manager name if exists
-      const managerName = employee.managerId ? getEmployeeNameById(employee.managerId) : '';
-
-      // Build column values JSON
-      const columnValues = {};
-
-      // Position column - Monday.com API requires JSON format {"text": "value"} for all text columns
-      if (positionColumnId && employee.position) {
-        // Each value must be a JSON string
-        columnValues[positionColumnId] = JSON.stringify({ text: employee.position });
-      }
-
-      // Department column - handle dropdown or text type
-      if (departmentColumnId && employee.department) {
-        if (departmentColumnInfo && departmentColumnInfo.type === 'dropdown' && departmentColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = departmentColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-
-          // Try to find exact match (case-insensitive)
-          for (const [id, text] of Object.entries(labels)) {
-            const textStr = String(text || '');
-            const departmentStr = String(employee.department || '');
-
-            if (textStr === departmentStr || textStr.toLowerCase() === departmentStr.toLowerCase()) {
-              labelId = parseInt(id);
-              labelText = textStr;
-              break;
-            }
-          }
-
-          if (labelId !== null) {
-            // Use label ID (preferred) - value must be JSON string
-            columnValues[departmentColumnId] = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback - value must be JSON string
-            columnValues[departmentColumnId] = JSON.stringify({ labels: [labelText] });
-          }
-          // If no match found, skip setting department column
-        } else {
-          // Text column - value must be JSON string
-          columnValues[departmentColumnId] = JSON.stringify({ text: employee.department });
-        }
-      }
-
-      // Email column
-      if (emailColumnId && employee.email) {
-        // Value must be JSON string
-        columnValues[emailColumnId] = JSON.stringify({ email: employee.email });
-      }
-
-      // Phone column
-      if (phoneColumnId && employee.phone) {
-        // Value must be JSON string
-        columnValues[phoneColumnId] = JSON.stringify({ phone: employee.phone, countryShortName: 'US' });
-      }
-
-      // Manager column - handle dropdown or text type
-      if (managerColumnId && managerName) {
-        if (managerColumnInfo && managerColumnInfo.type === 'dropdown' && managerColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = managerColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-
-          // Try to find exact match (case-insensitive)
-          for (const [id, text] of Object.entries(labels)) {
-            // Ensure both text and managerName are strings
-            const textStr = String(text || '');
-            const managerNameStr = String(managerName || '');
-
-            if (textStr === managerNameStr || textStr.toLowerCase() === managerNameStr.toLowerCase()) {
-              labelId = parseInt(id);
-              labelText = textStr;
-              break;
-            }
-          }
-
-          if (labelId !== null) {
-            // Use label ID (preferred) - value must be JSON string
-            columnValues[managerColumnId] = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback - value must be JSON string
-            columnValues[managerColumnId] = JSON.stringify({ labels: [labelText] });
-          }
-          // If no match found, skip setting manager column
-        } else {
-          // Text column - value must be JSON string
-          columnValues[managerColumnId] = JSON.stringify({ text: managerName });
-        }
-      }
-
-      // Handle custom fields - iterate through all employee properties
-      const standardFields = ['id', 'mondayItemId', 'name', 'position', 'department', 'email', 'phone', 'managerId', 'managerName', 'image'];
-
-      for (const [fieldName, fieldValue] of Object.entries(employee)) {
-        // Skip standard fields
-        if (standardFields.includes(fieldName)) continue;
-
-        // Skip empty values
-        if (!fieldValue || (typeof fieldValue === 'string' && !fieldValue.trim())) continue;
-
-        // Find Monday.com column ID for this field
-        let columnId = fieldNameToColumnId[fieldName];
-
-        // If not found in mapping, try to find by title (case-insensitive, partial match)
-        if (!columnId) {
-          // Try exact match first (sanitized title)
-          let entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-            const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-            return sanitizedTitle === fieldName;
-          });
-
-          // If not found, try case-insensitive partial match
-          if (!entry) {
-            entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-              const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-              const fieldNameLower = fieldName.toLowerCase();
-              return sanitizedTitle.includes(fieldNameLower) || fieldNameLower.includes(sanitizedTitle);
-            });
-          }
-
-          if (entry) {
-            columnId = entry[0];
-          }
-        }
-
-        // If found a column, set the value
-        if (columnId) {
-          // Determine column type and format value accordingly
-          const columnType = columnIdToType[columnId];
-
-          if (columnType === 'text') {
-            columnValues[columnId] = JSON.stringify({ text: String(fieldValue) });
-          } else if (columnType === 'numbers') {
-            columnValues[columnId] = JSON.stringify({ number: parseFloat(fieldValue) || 0 });
-          } else {
-            // Default to text for unknown types
-            columnValues[columnId] = JSON.stringify({ text: String(fieldValue) });
-          }
-        } else {
-          console.warn('⚠️ Custom field not found in Monday.com:', {
-            fieldName,
-            fieldValue,
-            availableColumns: Object.keys(mondayColumnMapping).map(id => ({ id, title: mondayColumnMapping[id] }))
-          });
-        }
-      }
-
-      // Convert columnValues object to the format expected by Monday.com API
-      // Monday.com API expects column_values as a JSON object where each value is a JSON object
-      // Convert JSON strings to objects (like updateEmployeeInMonday does)
-      const columnValuesObj = {};
-      for (const [columnId, jsonString] of Object.entries(columnValues)) {
-        try {
-          columnValuesObj[columnId] = JSON.parse(jsonString);
-        } catch (e) {
-          console.warn('⚠️ Failed to parse JSON string for column:', columnId, jsonString);
-          // If parsing fails, try to use as-is
-          columnValuesObj[columnId] = jsonString;
-        }
-      }
-
-      // Use Monday.com SDK's monday.api() method which handles token automatically
-      // Convert JSON strings to objects for JSON! type variable (like updateEmployeeInMonday)
-      const mutation = `mutation ($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
-        change_multiple_column_values(
-          board_id: $boardId,
-          item_id: $itemId,
-          column_values: $columnValues
-        ) {
-          id
-        }
-      }`;
-
-      const variables = {
-        boardId: String(mondayBoardId),
-        itemId: String(employee.mondayItemId),
-        columnValues: columnValuesObj  // Pass raw object (like updateEmployeeInMonday)
-      };
-
-      console.log('🔍 Updating employee in Monday.com:', {
-        boardId: mondayBoardId,
-        itemId: employee.mondayItemId,
-        columnValues: columnValuesObj
-      });
-
-      const response = await monday.api(mutation, { variables });
-
-      if (response.errors) {
-        console.error('❌ Monday.com API error:', response.errors);
-      } else {
-        console.log('✅ Employee updated successfully in Monday.com');
-      }
-    } catch (error) {
-      console.error('❌ Error updating employee in Monday.com:', error.message);
-    }
-  };
-
-  // Delete employee in Monday.com
-  const deleteEmployeeInMonday = async (mondayItemId) => {
-    if (!mondayBoardId || !mondayItemId) {
-      return;
-    }
-
-    try {
-      const mutation = `mutation {
-        delete_item(item_id: ${mondayItemId}) {
-          id
-        }
-      }`;
-
-      const response = await monday.api(mutation);
-
-      if (response.errors) {
-        console.error('❌ Monday.com API error:', response.errors);
-      }
-    } catch (error) {
-      console.error('❌ Error deleting employee from Monday.com:', error.message);
-    }
-  };
-
-  // Upload image to Monday.com
-  const uploadImageToMonday = async (employee, file) => {
-    if (!employee || !employee.mondayItemId || !imageColumnId || !file) {
-      console.error('❌ Missing required data for image upload:', { employee, imageColumnId, file });
-      setIsUploadingImage(false);
-      return null;
-    }
-
-    setIsUploadingImage(true);
-
-    try {
-      // Get Monday.com API token
-      const token = await monday.get('token');
-      if (!token) {
-        throw new Error('Monday.com token not available');
-      }
-
-      // Monday.com API requires multipart/form-data with specific format:
-      const formData = new FormData();
-      formData.append('token', token);
-      formData.append('query', `mutation ($file: File!) { add_file_to_column (item_id: ${employee.mondayItemId}, column_id: "${imageColumnId}", file: $file) { id } }`);
-      formData.append('variables[file]', file);
-
-      console.log('🔍 Uploading image to Monday.com:', {
-        itemId: employee.mondayItemId,
-        columnId: imageColumnId,
-        fileName: file.name,
-        fileSize: file.size
-      });
-
-      // Use fetch instead of monday.api for file upload (CORS issues with SDK)
-      const fetchPromise = fetch('https://api.monday.com/v2/file', {
-        method: 'POST',
-        body: formData
-      });
-
-      // Set timeout for upload
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Upload timeout')), 30000); // 30 second timeout
-      });
-
-      const result = await Promise.race([fetchPromise, timeoutPromise]);
-
-      if (!result.ok) {
-        throw new Error(`HTTP error! status: ${result.status}`);
-      }
-
-      const response = await result.json();
-
-      if (response.errors) {
-        throw new Error('CORS error: Cannot upload files directly from browser. Please upload images directly in Monday.com board.');
-      }
-
-      console.log('✅ Image uploaded successfully to Monday.com');
-      return response.data?.add_file_to_column?.id;
-    } catch (error) {
-      // Handle all upload errors
-      console.error('❌ Error uploading image to Monday.com:', error);
-      if (error.message.includes('timeout')) {
-        console.error('Upload timeout after 30 seconds. This might be due to CORS restrictions.');
-      } else if (error.message.includes('Failed to fetch') || error.name === 'TypeError') {
-        console.error('CORS error: Cannot upload files directly from browser. Please upload images directly in Monday.com board.');
-      }
-      throw error;
-    } finally {
-      setIsUploadingImage(false);
-    }
-  };
-
   // Load employees from Monday.com board
   const loadEmployeesFromBoard = async (boardId) => {
-    // Temporarily disabled due to code issues
-    console.log('🔄 Monday.com sync temporarily disabled');
-    return;
-  };
-
-  /*
-  const loadEmployeesFromBoard_old = async (boardId) => {
-    if (!boardId) {
-      console.warn('⚠️ No board ID provided to loadEmployeesFromBoard');
-      return;
-    }
 
     try {
-      console.log('🔄 Loading employees from Monday.com board:', boardId);
-
-      // GraphQL query to load board items with column values
+      // Query to get board items with person details and board structure
+      // Using column_values with all necessary fields for Monday.com API v2
       const query = `query {
         boards(ids: [${boardId}]) {
+          name
+          groups {
+            id
+            title
+          }
           items_page(limit: 500) {
             items {
               id
               name
-              updated_at
               group {
                 id
                 title
@@ -1228,6 +687,19 @@ function App() {
                 text
                 value
                 type
+                ... on StatusValue {
+                  text
+                  index
+                }
+                ... on TextValue {
+                  text
+                }
+                ... on PeopleValue {
+                  persons_and_teams {
+                    id
+                    kind
+                  }
+                }
               }
             }
           }
@@ -1235,444 +707,494 @@ function App() {
       }`;
 
       const response = await monday.api(query);
-      const items = response.data?.boards?.[0]?.items_page?.items || [];
 
-      if (items.length === 0) {
-        console.log('ℹ️ No items found in Monday.com board');
-        return;
-      }
+      if (response.data && response.data.boards && response.data.boards[0]) {
+        const board = response.data.boards[0];
+        const items = board.items_page.items;
 
-      console.log(`📊 Processing ${items.length} items from Monday.com...`);
+        console.log('📊 Monday.com-დან მიღებული მონაცემები:', items.map(item => ({
+          id: item.id,
+          name: item.name,
+          group: item.group?.title,
+          column_values: item.column_values.map(col => ({
+            id: col.id,
+            text: col.text,
+            type: col.type,
+            value: col.value
+          }))
+        })));
 
-      // Get column mappings (this should be done once and cached)
-      const columnIdToTitle = {};
+        // Detect column mappings from the board structure
+        const detectedMappings = {};
+        if (items.length > 0 && items[0].column_values) {
+          const sampleItem = items[0];
 
-      // First pass: build column mappings from the first item
-      if (items.length > 0) {
-        const firstItem = items[0];
-        firstItem.column_values.forEach(col => {
-          if (col.id && col.text) {
-            columnIdToTitle[col.id] = col.text;
-          }
-        });
-      }
+          // Analyze each column to determine what field it represents
+          sampleItem.column_values.forEach(col => {
+            const columnId = col.id;
+            const columnText = (col.text || '').toLowerCase().trim();
+            const columnType = col.type;
 
-      // Process each item into employee format
-      const mondayEmployees = items.map((item, index) => {
-        // Extract data from columns - similar to the logic I saw earlier
-        const columnValues = item.column_values || [];
+            console.log(`🔍 Analyzing column: ID=${columnId}, Text="${col.text}", Type=${columnType}`);
 
-        // Find specific columns
-        const firstnameColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-
-          // Check by column ID
-          if (
-            columnId === 'firstname' ||
-            columnId === 'first_name' ||
-            columnId === 'first-name' ||
-            columnId === 'name' ||
-            columnId === 'სახელი'
-          ) {
-            return true;
-          }
-
-          // Check by column title
-          if (
-            columnTitle === 'first name' ||
-            columnTitle === 'firstname' ||
-            columnTitle === 'first-name' ||
-            columnTitle === 'name' ||
-            columnTitle === 'სახელი'
-          ) {
-            return true;
-          }
-
-          return false;
-        });
-
-        // Similar logic for other columns...
-        const lastnameColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-
-          if (
-            columnId === 'lastname' ||
-            columnId === 'last_name' ||
-            columnId === 'last-name' ||
-            columnId === 'surname' ||
-            columnId === 'გვარი'
-          ) {
-            return true;
-          }
-
-          if (
-            columnTitle === 'last name' ||
-            columnTitle === 'lastname' ||
-            columnTitle === 'surname' ||
-            columnTitle === 'გვარი'
-          ) {
-            return true;
-          }
-
-          return false;
-        });
-
-        // Build full name
-        let fullName = item.name; // Default fallback
-
-        // Extract value from First Name column
-        let firstNameValue = null;
-        if (firstnameColumn) {
-          // First check text field, then value field
-          if (firstnameColumn.text && firstnameColumn.text.trim()) {
-            firstNameValue = firstnameColumn.text.trim();
-          } else if (firstnameColumn.value) {
-            try {
-              const parsed = JSON.parse(firstnameColumn.value);
-              firstNameValue = parsed.text || parsed.value || firstnameColumn.value;
-            } catch (e) {
-              firstNameValue = firstnameColumn.value;
+            // Map columns based on their text/header names and types
+            if (columnText.includes('position') || columnText.includes('პოზიცია') || columnText === 'role' || columnText.includes('title')) {
+              detectedMappings.position = columnId;
+              console.log(`✅ Mapped POSITION to column ${columnId}`);
+            } else if (columnText.includes('department') || columnText.includes('განყოფილება') || columnText.includes('dept') || columnText.includes('division')) {
+              detectedMappings.department = columnId;
+              console.log(`✅ Mapped DEPARTMENT to column ${columnId}`);
+            } else if (columnText.includes('manager') || columnText.includes('მენეჯერი') || columnText.includes('supervisor') || columnText.includes('boss') || columnText.includes('lead') || columnText.includes('reports to')) {
+              detectedMappings.manager = columnId;
+              console.log(`✅ Mapped MANAGER to column ${columnId}`);
+            } else if (columnText.includes('email') || columnText.includes('ელფოსტა') || columnText.includes('e-mail') || columnText.includes('mail')) {
+              detectedMappings.email = columnId;
+              console.log(`✅ Mapped EMAIL to column ${columnId}`);
+            } else if (columnText.includes('phone') || columnText.includes('ტელეფონი') || columnText.includes('mobile') || columnText.includes('contact') || columnText.includes('tel')) {
+              detectedMappings.phone = columnId;
+              console.log(`✅ Mapped PHONE to column ${columnId}`);
+            } else if (columnText.includes('image') || columnText.includes('photo') || columnText.includes('avatar') || columnText.includes('სურათი') || columnText.includes('picture')) {
+              detectedMappings.image = columnId;
+              console.log(`✅ Mapped IMAGE to column ${columnId}`);
+            } else if (columnText.includes('location') || columnText.includes('ადგილმდებარეობა') || columnText.includes('office') || columnText.includes('city') || columnText.includes('address')) {
+              // If it's specifically address, map to address instead
+              if (columnText.includes('address') || columnText.includes('მისამართი')) {
+                detectedMappings.address = columnId;
+                console.log(`✅ Mapped ADDRESS to column ${columnId}`);
+              } else {
+                detectedMappings.location = columnId;
+                console.log(`✅ Mapped LOCATION to column ${columnId}`);
+              }
+            } else if ((columnText.includes('start') && columnText.includes('date')) || columnText.includes('hire date') || columnText.includes('join date')) {
+              detectedMappings.startDate = columnId;
+              console.log(`✅ Mapped START_DATE to column ${columnId}`);
+            } else if (columnText.includes('salary') || columnText.includes('ხელფასი') || columnText.includes('pay') || columnText.includes('compensation') || columnText.includes('wage')) {
+              detectedMappings.salary = columnId;
+              console.log(`✅ Mapped SALARY to column ${columnId}`);
+            } else if (columnText.includes('notes') || columnText.includes('შენიშვნები') || columnText.includes('comments') || columnText.includes('description')) {
+              detectedMappings.notes = columnId;
+              console.log(`✅ Mapped NOTES to column ${columnId}`);
             }
-          }
-        }
+          });
 
-        // Extract value from Last Name column
-        let lastNameValue = null;
-        if (lastnameColumn) {
-          if (lastnameColumn.text && lastnameColumn.text.trim()) {
-            lastNameValue = lastnameColumn.text.trim();
-          } else if (lastnameColumn.value) {
-            try {
-              const parsed = JSON.parse(lastnameColumn.value);
-              lastNameValue = parsed.text || parsed.value || lastnameColumn.value;
-            } catch (e) {
-              lastNameValue = lastnameColumn.value;
+          console.log('🗺️ Detected column mappings:', detectedMappings);
+          console.log('📊 Mapping summary:', Object.keys(detectedMappings).length, 'mappings found');
+          console.log('📋 All available columns in Monday.com board:');
+          sampleItem.column_values.forEach(col => {
+            console.log(`   Column ID: ${col.id}, Name: "${col.text}", Type: ${col.type}`);
+          });
+
+          // Try to map more columns by looking at column IDs and types
+          sampleItem.column_values.forEach(col => {
+            const columnId = col.id;
+            const columnText = (col.text || '').toLowerCase().trim();
+            const columnType = col.type;
+
+            // Additional mapping by column ID patterns
+            if (columnId.includes('text') && !detectedMappings.position) {
+              // First available text column could be position
+              detectedMappings.position = columnId;
+              console.log(`🔄 Additional mapping - POSITION: ${columnId} (${col.text})`);
+            } else if (columnId.includes('text') && !detectedMappings.department && detectedMappings.position !== columnId) {
+              // Second text column could be department
+              detectedMappings.department = columnId;
+              console.log(`🔄 Additional mapping - DEPARTMENT: ${columnId} (${col.text})`);
+            } else if (columnId.includes('text') && !detectedMappings.phone && detectedMappings.position !== columnId && detectedMappings.department !== columnId) {
+              // Third text column could be phone
+              detectedMappings.phone = columnId;
+              console.log(`🔄 Additional mapping - PHONE: ${columnId} (${col.text})`);
             }
-          }
-        }
 
-        // Clean up values
-        if (firstNameValue) firstNameValue = String(firstNameValue).trim();
-        if (lastNameValue) lastNameValue = String(lastNameValue).trim();
-
-        // Build full name from first and last name if available
-        if (firstNameValue || lastNameValue) {
-          fullName = `${firstNameValue || ''} ${lastNameValue || ''}`.trim();
-        }
-
-        // Extract other fields (simplified version)
-        const positionColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-
-          if (columnId === 'position' || columnId === 'role' || columnTitle === 'position' || columnTitle === 'role') {
-            return true;
-          }
-          return false;
-        });
-
-        const departmentColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-
-          if (columnId === 'department' || columnTitle === 'department') {
-            return true;
-          }
-          return false;
-        });
-
-        const emailColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-          return columnId === 'email' || columnTitle === 'email';
-        });
-
-        const phoneColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-          return columnId === 'phone' || columnTitle === 'phone';
-        });
-
-        const managerColumn = columnValues.find(col => {
-          if (!col) return false;
-          const columnId = (col.id || '').toLowerCase();
-          const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-          return columnId === 'manager' || columnTitle === 'manager' || columnId === 'reports_to' || columnTitle === 'reports to';
-        });
-
-        // Extract values
-        let positionValue = '';
-        if (positionColumn) {
-          if (positionColumn.text && positionColumn.text.trim()) {
-            positionValue = positionColumn.text.trim();
-          } else if (positionColumn.value) {
-            try {
-              const parsed = JSON.parse(positionColumn.value);
-              positionValue = parsed.text || parsed.value || positionColumn.value;
-            } catch (e) {
-              positionValue = positionColumn.value;
+            // Map by type if text contains common words
+            if (columnType === 'text' && columnText.includes('pos')) {
+              detectedMappings.position = columnId;
+              console.log(`🔄 Type-based mapping - POSITION: ${columnId} (${col.text})`);
+            } else if (columnType === 'text' && columnText.includes('dept')) {
+              detectedMappings.department = columnId;
+              console.log(`🔄 Type-based mapping - DEPARTMENT: ${columnId} (${col.text})`);
+            } else if (columnType === 'text' && columnText.includes('phone')) {
+              detectedMappings.phone = columnId;
+              console.log(`🔄 Type-based mapping - PHONE: ${columnId} (${col.text})`);
             }
+          });
+
+          console.log('🎯 Final column mappings after additional detection:', detectedMappings);
+
+          // If still no mappings found, try common Monday.com column patterns
+          if (Object.keys(detectedMappings).length <= 1) { // Only email or nothing
+            console.log('⚠️ Limited mappings found, trying fallback patterns...');
+
+            const availableColumns = sampleItem.column_values;
+            const textColumns = availableColumns.filter(col => col.type === 'text' && !col.id.includes('email'));
+
+            // Assign text columns in order: position, department, phone, manager
+            const fieldsToAssign = ['position', 'department', 'phone', 'manager'];
+            textColumns.slice(0, 4).forEach((col, index) => {
+              const field = fieldsToAssign[index];
+              if (!detectedMappings[field]) {
+                detectedMappings[field] = col.id;
+                console.log(`🔄 Fallback mapping - ${field.toUpperCase()}: ${col.id} (${col.text})`);
+              }
+            });
+
+            console.log('🎯 Final mappings after fallback:', detectedMappings);
+          }
+
+          setColumnMappings(detectedMappings);
+        }
+
+        // Check if column_values exist in API response
+        if (items.length > 0) {
+          const firstItem = items[0];
+          
+          // Check if column_values is empty or null
+          if (!firstItem.column_values || firstItem.column_values.length === 0) {
+            console.error('❌ column_values is empty or null!');
+            console.error('   This might be a permissions issue.');
+            console.error('   Make sure your Monday.com app has these scopes:');
+            console.error('   - boards:read');
+            console.error('   - items:read');
           }
         }
 
-        let departmentValue = 'General';
-        if (departmentColumn) {
-          if (departmentColumn.text && departmentColumn.text.trim()) {
-            departmentValue = departmentColumn.text.trim();
-          } else if (departmentColumn.value) {
-            try {
-              const parsed = JSON.parse(departmentColumn.value);
-              departmentValue = parsed.text || parsed.value || departmentColumn.value;
-            } catch (e) {
-              departmentValue = departmentColumn.value;
-            }
-          }
-        }
-
-        let emailValue = '';
-        if (emailColumn) {
-          if (emailColumn.text && emailColumn.text.trim()) {
-            emailValue = emailColumn.text.trim();
-          } else if (emailColumn.value) {
-            try {
-              const parsed = JSON.parse(emailColumn.value);
-              emailValue = parsed.email || parsed.text || parsed.value || emailColumn.value;
-            } catch (e) {
-              emailValue = emailColumn.value;
-            }
-          }
-        }
-
-        let phoneValue = '';
-        if (phoneColumn) {
-          if (phoneColumn.text && phoneColumn.text.trim()) {
-            phoneValue = phoneColumn.text.trim();
-          } else if (phoneColumn.value) {
-            try {
-              const parsed = JSON.parse(phoneColumn.value);
-              phoneValue = parsed.phone || parsed.text || parsed.value || phoneColumn.value;
-            } catch (e) {
-              phoneValue = phoneColumn.value;
-            }
-          }
-        }
-
-        let managerName = '';
-        if (managerColumn) {
-          if (managerColumn.text && managerColumn.text.trim()) {
-            managerName = managerColumn.text.trim();
-          } else if (managerColumn.value) {
-            try {
-              const parsed = JSON.parse(managerColumn.value);
-              managerName = parsed.text || parsed.value || managerColumn.value;
-            } catch (e) {
-              managerName = managerColumn.value;
-            }
-          }
-        }
-
-        return {
-          id: parseInt(item.id),
-          mondayItemId: item.id,
-          name: fullName,
-          position: positionValue || 'Employee',
-          department: departmentValue,
-          email: emailValue || `${fullName.toLowerCase().replace(/\s+/g, '.')}@company.com`,
-          phone: phoneValue || `+1-555-${String(100 + index).padStart(3, '0')}-${String(1000 + index).padStart(4, '0')}`,
-          managerId: null, // Will be resolved in second pass
-          managerName: managerName,
-          image: null
+        // Helper functions for enhanced text matching and value extraction
+        const normalizeText = (text) => {
+          return text
+            .toLowerCase()
+            .trim()
+            // Remove special characters and punctuation, but keep some meaningful ones
+            .replace(/[^\w\s\u10D0-\u10FF\-_]/g, ' ') // Keep Georgian, hyphens, underscores
+            // Normalize multiple spaces
+            .replace(/\s+/g, ' ')
+            // Remove common prefixes/suffixes that don't affect meaning
+            .replace(/^(the|a|an)\s+/i, '')
+            .replace(/\s+(column|field|value|data)$/i, '')
+            // Normalize common abbreviations
+            .replace(/\bdept\b/g, 'department')
+            .replace(/\bpos\b/g, 'position')
+            .replace(/\bmgmt\b/g, 'management')
+            .replace(/\bmg\b/g, 'manager')
+            .replace(/\bsup\b/g, 'supervisor')
+            .trim();
         };
-      });
 
-      // Second pass: Apply structured hierarchical organization
-      if (mondayEmployees.length > 0) {
-        // Step 1: Identify and structure C-level executives
-        const cLevelTitles = ['CTO', 'Chief Technology Officer', 'CFO', 'Chief Financial Officer', 'COO', 'Chief Operating Officer'];
-        const vpTitles = ['VP', 'Vice President', 'Director'];
+        // Enhanced value extraction from monday.com column
+        const extractColumnValue = (column) => {
+          if (!column) return null;
 
-        // Find or create CEO
-        let ceo = mondayEmployees.find(emp =>
-          emp.position && (
-            emp.position.toLowerCase().includes('ceo') ||
-            emp.position.toLowerCase().includes('chief executive') ||
-            emp.position.toLowerCase().includes('founder') ||
-            emp.position.toLowerCase().includes('president')
-          )
-        );
+          // Debug logging for column extraction
+          // console.log('🔍 Processing column:', column.id, 'type:', column.type, 'text:', column.text, 'value:', column.value);
 
-        // If no CEO found, make first employee CEO
-        if (!ceo) {
-          ceo = mondayEmployees[0];
-          ceo.managerId = null;
-        } else {
-          ceo.managerId = null;
-        }
+          // Priority 1: Use text field (most common for display values)
+          if (column.text && column.text.trim()) {
+            // For some column types, text might be the column header, not the value
+            // Check if text looks like a column header (contains common header words)
+            const textLower = column.text.toLowerCase();
+            const headerIndicators = ['column', 'field', 'name', 'title', 'header'];
 
-        // Step 2: Identify C-level executives (report to CEO)
-        const cLevelEmployees = mondayEmployees.filter(emp =>
-          emp !== ceo && emp.position && cLevelTitles.some(title =>
-            emp.position.toLowerCase().includes(title.toLowerCase())
-          )
-        );
+            // If text contains header indicators or is very short, it might be a header
+            if (headerIndicators.some(indicator => textLower.includes(indicator)) || textLower.length < 3) {
+              // Try to get value from value field instead
+              if (column.value) {
+                try {
+                  const parsed = JSON.parse(column.value);
+                  // Different column types have different value structures
+                  if (typeof parsed === 'string') {
+                    return parsed.trim();
+                  } else if (parsed && typeof parsed === 'object') {
+                    // Try common value structures
+                    return parsed.text || parsed.value || parsed.name || parsed.label || parsed.title || null;
+                  }
+                } catch (e) {
+                  // If not JSON, use value directly
+                  return String(column.value).trim();
+                }
+              }
+            } else {
+              // Text seems to be the actual value
+              return column.text.trim();
+            }
+          }
 
-        cLevelEmployees.forEach(emp => {
-          emp.managerId = ceo.id;
-        });
+          // Priority 2: Try value field
+          if (column.value) {
+            try {
+              const parsed = JSON.parse(column.value);
+              if (typeof parsed === 'string') {
+                return parsed.trim();
+              } else if (parsed && typeof parsed === 'object') {
+                // Handle different monday.com column types
+                switch (column.type) {
+                  case 'text':
+                  case 'long_text':
+                    return parsed.text || parsed.value;
+                  case 'status':
+                    return parsed.text || parsed.label || parsed.index;
+                  case 'dropdown':
+                  case 'multiple_dropdown':
+                    return parsed.text || parsed.label;
+                  case 'people':
+                    return parsed.text; // People columns usually have text as display name
+                  case 'date':
+                    return parsed.text || parsed.date;
+                  case 'numbers':
+                  case 'rating':
+                    return parsed.text || parsed.number || parsed.value;
+                  case 'files':
+                  case 'file':
+                    // Handle file columns - return the first file URL if available
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      const firstFile = parsed[0];
+                      return firstFile.url || firstFile.file || firstFile.public_url || null;
+                    }
+                    return null;
+                  default:
+                    return parsed.text || parsed.value || parsed.label;
+                }
+              }
+            } catch (e) {
+              // If not JSON, return as string
+              return String(column.value).trim();
+            }
+          }
 
-        // Step 3: Identify VP/Director level (report to C-level or CEO)
-        const vpEmployees = mondayEmployees.filter(emp =>
-          emp !== ceo && !cLevelEmployees.includes(emp) && emp.position &&
-          vpTitles.some(title => emp.position.toLowerCase().includes(title.toLowerCase()))
-        );
+          // Priority 3: Fallback to text even if it looks like a header
+          if (column.text && column.text.trim()) {
+            return column.text.trim();
+          }
 
-        vpEmployees.forEach(emp => {
-          // Try to match with C-level manager first, then CEO
-          let manager = cLevelEmployees.find(cLevel =>
-            emp.managerName && cLevel.name &&
-            (cLevel.name.toLowerCase().includes(emp.managerName.toLowerCase()) ||
-             emp.managerName.toLowerCase().includes(cLevel.name.toLowerCase()))
+          return null;
+        };
+
+        const checkFuzzyMatch = (text1, text2) => {
+          // Common variations and synonyms - expanded
+          const variations = {
+            // English variations
+            'position': ['job', 'role', 'title', 'post', 'occupation', 'function', 'designation', 'capacity', 'status'],
+            'department': ['dept', 'division', 'group', 'unit', 'section', 'branch', 'area', 'sector', 'team', 'office'],
+            'manager': ['supervisor', 'boss', 'lead', 'head', 'director', 'superior', 'chief', 'executive', 'coordinator', 'administrator'],
+            'name': ['full name', 'employee name', 'person', 'contact', 'full_name', 'employee_name', 'person_name'],
+            'email': ['e-mail', 'mail', 'contact email', 'email address', 'e_mail', 'email_addr'],
+            'phone': ['telephone', 'mobile', 'cell', 'contact number', 'tel', 'contact_phone', 'phone_number'],
+            'location': ['office', 'address', 'city', 'place', 'site', 'workplace', 'work_location'],
+            'salary': ['pay', 'compensation', 'wage', 'income', 'remuneration', 'pay_rate', 'hourly_rate'],
+
+            // Georgian variations - expanded
+            'პოზიცია': ['თანამდებობა', 'სამუშაო', 'როლი', 'დასახელება', 'ამოცანა', 'წოდება', 'დონე'],
+            'განყოფილება': ['დეპარტამენტი', 'დეპტ', 'დივიზია', 'ჯგუფი', 'სექცია', 'სამსახური', 'გუნდი', 'ფილიალი'],
+            'მენეჯერი': ['ხელმძღვანელი', 'ბოსი', 'უფროსი', 'დირექტორი', 'სუპერვაიზერი', 'ლიდერი', 'გუნდის ლიდერი'],
+            'სახელი': ['სრული სახელი', 'თანამშრომელი', 'პიროვნება', 'სახელწოდება', 'დასახელება'],
+            'ელფოსტა': ['ელექტრონული ფოსტა', 'ელ-ფოსტა', 'მეილი', 'საკონტაქტო ელფოსტა'],
+            'ტელეფონი': ['მობილური', 'საკონტაქტო ნომერი', 'ტელ', 'სამუშაო ტელეფონი'],
+            'მდებარეობა': ['ოფისი', 'მისამართი', 'ქალაქი', 'ადგილი', 'სამუშაო ადგილი'],
+            'ხელფასი': ['ანაზღაურება', 'შემოსავალი', 'ზღვა', 'თვიური ხელფასი']
+          };
+
+          // Check if text1 matches any variation of text2
+          for (const [key, synonyms] of Object.entries(variations)) {
+            if ((text1 === key && synonyms.includes(text2)) ||
+                (text2 === key && synonyms.includes(text1))) {
+              return true;
+            }
+          }
+
+          // Check for partial matches with variations
+          for (const [key, synonyms] of Object.entries(variations)) {
+            if (text1.includes(key)) {
+              if (synonyms.some(syn => text2.includes(syn))) {
+                return true;
+              }
+            }
+            if (text2.includes(key)) {
+              if (synonyms.some(syn => text1.includes(syn))) {
+                return true;
+              }
+            }
+          }
+
+          // Additional fuzzy matching strategies
+          const words1 = text1.split(/\s+/);
+          const words2 = text2.split(/\s+/);
+
+          // Check if significant words overlap
+          const significantWords1 = words1.filter(word => word.length > 2);
+          const significantWords2 = words2.filter(word => word.length > 2);
+
+          const commonWords = significantWords1.filter(word1 =>
+            significantWords2.some(word2 =>
+              word1.includes(word2) || word2.includes(word1) ||
+              (word1.length > 3 && word2.length > 3 &&
+               (word1.substring(0, 3) === word2.substring(0, 3)))
+            )
           );
 
-          if (!manager) {
-            manager = ceo;
+          if (commonWords.length > 0) {
+            return true;
           }
 
-          emp.managerId = manager.id;
-        });
+          // Check for common abbreviations
+          const abbreviations = {
+            'pos': 'position',
+            'dept': 'department',
+            'mgr': 'manager',
+            'sup': 'supervisor',
+            'dir': 'director',
+            'coord': 'coordinator',
+            'admin': 'administrator',
+            'rep': 'representative',
+            'spec': 'specialist',
+            'eng': 'engineer',
+            'dev': 'developer'
+          };
 
-        // Step 4: Assign remaining employees based on manager names
-        const remainingEmployees = mondayEmployees.filter(emp =>
-          emp !== ceo && !cLevelEmployees.includes(emp) && !vpEmployees.includes(emp)
-        );
+          for (const [abbr, full] of Object.entries(abbreviations)) {
+            if ((text1.includes(abbr) && text2.includes(full)) ||
+                (text1.includes(full) && text2.includes(abbr))) {
+              return true;
+            }
+          }
 
-        remainingEmployees.forEach(emp => {
-          if (emp.managerName) {
-            // Find manager by name matching
-            const manager = mondayEmployees.find(m => {
-              if (!m.name) return false;
-              const empManagerName = emp.managerName.toLowerCase().trim();
-              const managerName = m.name.toLowerCase().trim();
+          return false;
+        };
 
-              // Exact match
-              if (managerName === empManagerName) return true;
+        // Helper function to find column by ID and title (enhanced)
+        const findColumn = (item, possibleIds, possibleTitles, excludeColumns = []) => {
+          // Safety check: ensure item and column_values exist
+          if (!item || !item.column_values || !Array.isArray(item.column_values)) {
+            return null;
+          }
 
-              // First name match
-              const empParts = empManagerName.split(' ');
-              const managerParts = managerName.split(' ');
-              if (empParts.length > 0 && managerParts.length > 0 &&
-                  empParts[0] === managerParts[0]) return true;
+          // const debugEmployees = ['Lazarei', 'Givi', 'Gujia'];
+          // if (debugEmployees.includes(item.name)) {
+          //   console.log(`🔍 findColumn called for ${item.name} with IDs: [${possibleIds.join(', ')}] and titles: [${possibleTitles.slice(0, 3).join(', ')}...]`);
+          // }
+
+          let foundColumn = null;
+
+          for (const col of item.column_values) {
+            if (!col) continue;
+
+            // Skip already used columns
+            if (excludeColumns.some(excluded => excluded.id === col.id)) {
+              // if (debugEmployees.includes(item.name)) {
+              //   console.log(`🔍 Skipping column ${col.id} (already used)`);
+              // }
+              continue;
+            }
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase().trim();
+
+            // Priority 1: Check by ID (exact match) - only for specific, non-generic IDs
+            const specificIds = possibleIds.filter(id => !id.includes('text') && id !== 'numbers' && id !== 'date' && id !== 'status');
+            if (specificIds.some(id => columnId === id.toLowerCase())) {
+              foundColumn = col;
+              break;
+            }
+
+            // Priority 2: Enhanced title/text matching with multiple strategies
+            const matchesTitle = possibleTitles.some(title => {
+              const titleLower = title.toLowerCase();
+              const titleNormalized = normalizeText(titleLower);
+              const columnNormalized = normalizeText(columnText);
+
+              // Strategy 1: Exact match (after normalization)
+              if (columnNormalized === titleNormalized) {
+                return true;
+              }
+
+              // Strategy 2: Contains match (both directions)
+              if (columnNormalized.includes(titleNormalized) || titleNormalized.includes(columnNormalized)) {
+                // Avoid matches that are too short or generic
+                if (titleNormalized.length >= 2 && columnNormalized.length >= 2) {
+                  return true;
+                }
+              }
+
+              // Strategy 3: Word-based matching
+              const titleWords = titleNormalized.split(/\s+/).filter(word => word.length > 1);
+              const columnWords = columnNormalized.split(/\s+/).filter(word => word.length > 1);
+
+              // Check if any significant words match
+              const hasWordMatch = titleWords.some(titleWord =>
+                columnWords.some(columnWord => {
+                  // Exact word match
+                  if (columnWord === titleWord) return true;
+                  // Partial word match (at least 4 characters)
+                  if (titleWord.length >= 4 && columnWord.length >= 4) {
+                    return columnWord.includes(titleWord) || titleWord.includes(columnWord);
+                  }
+                  return false;
+                })
+              );
+
+              if (hasWordMatch) {
+                return true;
+              }
+
+              // Strategy 4: Fuzzy matching for common variations
+              const fuzzyMatches = checkFuzzyMatch(columnNormalized, titleNormalized);
+              if (fuzzyMatches) {
+                return true;
+              }
 
               return false;
             });
 
-            if (manager) {
-              emp.managerId = manager.id;
-            } else {
-              // Default to CEO if no manager found
-              emp.managerId = ceo.id;
+            if (matchesTitle) {
+              foundColumn = col;
+              break;
             }
-          } else {
-            // Default to CEO if no manager name specified
-            emp.managerId = ceo.id;
+
+            // Priority 4: Check by ID (contains) - only for meaningful IDs
+            const meaningfulIds = possibleIds.filter(id =>
+              !['text', 'numbers', 'date', 'status'].includes(id) &&
+              !id.match(/^text\d+$/) &&
+              !id.match(/^numbers\d+$/) &&
+              !id.match(/^date\d+$/)
+            );
+            if (meaningfulIds.some(id => columnId.includes(id.toLowerCase()))) {
+              foundColumn = col;
+              break;
+            }
           }
-        });
 
-        // Step 5: Handle employees with department/position logic as fallback
-        const unassignedEmployees = mondayEmployees.filter(emp => emp.managerId === null);
-        unassignedEmployees.forEach(emp => {
-          // Logic for assigning based on department and position
-          emp.managerId = ceo.id; // Default fallback
-        });
-      }
 
-      const organizedEmployees = mondayEmployees;
+          // if (debugEmployees.includes(item.name) && foundColumn) {
+          //   console.log(`🔍 findColumn returning column ${foundColumn.id} (${foundColumn.text}) for ${item.name}`);
+          // }
+          return foundColumn;
+        };
 
-      // Remove managerName field (no longer needed)
-      organizedEmployees.forEach(emp => {
-        delete emp.managerName;
-      });
-
-      console.log(`✅ Monday.com-დან დატვირთული: ${organizedEmployees.length} თანამშრომელი`);
-      setEmployees(organizedEmployees);
-      localStorage.setItem('employees', JSON.stringify(organizedEmployees));
-      lastSyncTimeRef.current = Date.now();
-
-    } catch (error) {
-      console.error('❌ Error loading employees from Monday.com:', error.message || error);
-
-      // Fall back to sample data if Monday.com data loading fails
-      const savedEmployees = localStorage.getItem('employees');
-      if (savedEmployees) {
-        setEmployees(JSON.parse(savedEmployees));
-      } else {
-        // Generate sample data if no saved data exists
-        resetToSampleData();
-      }
-    }
-  };
-  */
-
-  /* ORPHANED CODE FROM loadEmployeesFromBoard - COMMENTED OUT
-  // Monday.com sync functions - periodically sync changes between local app and Monday.com board
-  
-  // Helper function to get employee name by ID
-  const getEmployeeNameById = (employeeId) => {
-    const employee = employees.find(emp => emp.id === employeeId);
-    return employee ? employee.name : '';
-  };
-
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
-
-  const toggleImportExportMenu = () => {
-    setShowImportExportMenu(!showImportExportMenu);
-  };
-
-  const handleDropdownMouseEnter = () => {
-    setShowImportExportMenu(true);
-  };
-
-  const handleDropdownContainerMouseLeave = () => {
-    setShowImportExportMenu(false);
-  };
-
-  const handleViewDropdownMouseEnter = () => {
-    setShowViewMenu(true);
-  };
-
-  const handleViewDropdownContainerMouseLeave = () => {
-    setShowViewMenu(false);
-  };
-
-  const handleSettingsDropdownMouseEnter = () => {
-    setShowSettingsMenu(true);
-  };
-
-  const handleSettingsDropdownContainerMouseLeave = () => {
-    setShowSettingsMenu(false);
-  };
-
-  const openSettingsModal = (section = 'field-management') => {
-    setActiveSettingsSection(section);
-    setShowSettingsModal(true);
-    setShowSettingsMenu(false);
-  };
-
-  const closeSettingsModal = () => {
-    setShowSettingsModal(false);
-  };
-
-  // All orphaned code blocks removed to fix syntax errors
+        // Convert Monday.com items to employees format
+        // First pass: create employees without manager relationships
+        const mondayEmployees = items.map((item, index) => {
+          // Safety check: skip items without column_values
+          if (!item || !item.column_values || !Array.isArray(item.column_values)) {
+            console.warn(`⚠️ Skipping item ${index} - missing column_values`);
+            return null;
+          }
+          // Find all relevant columns - comprehensive search
+          // In Monday.com API: column_values[].text = column header name, column_values[].value = cell value
+          // But sometimes text can also contain the value, so we check both
+          let firstnameColumn = item.column_values.find(col => {
+            if (!col || !col.text) return false;
+            
+            const headerText = (col.text || '').toLowerCase().trim();
+            const columnId = (col.id || '').toLowerCase();
+            
+            // Check by column ID (exact matches)
+            if (
+              columnId === 'firstname' ||
+              columnId === 'first_name' ||
+              columnId === 'first-name' ||
+              columnId === 'firstname' ||
+              columnId === 'first name'
+            ) {
+              return true;
+            }
+            
+            // Check by column ID (contains)
             if (
               columnId.includes('firstname') ||
               columnId.includes('first_name') ||
@@ -1681,28 +1203,28 @@ function App() {
               return true;
             }
             
-            // Check by column title from mapping (exact matches)
+            // Check by header text (column name) - exact matches
             if (
-              columnTitle === 'first name' ||
-              columnTitle === 'firstname' ||
-              columnTitle === 'first-name' ||
-              columnTitle === 'სახელი' // Georgian: სახელი
+              headerText === 'first name' ||
+              headerText === 'firstname' ||
+              headerText === 'first-name' ||
+              headerText === 'სახელი' // Georgian: სახელი
             ) {
               return true;
             }
             
-            // Check by column title from mapping (contains)
+            // Check by header text (column name) - contains
             if (
-              columnTitle.includes('first name') ||
-              columnTitle.includes('firstname') ||
-              columnTitle.includes('first-name') ||
-              columnTitle.includes('სახელი')
+              headerText.includes('first name') ||
+              headerText.includes('firstname') ||
+              headerText.includes('first-name') ||
+              headerText.includes('სახელი')
             ) {
               return true;
             }
             
-            // Check if it's a text column and title contains "first"
-            if (col.type === 'text' && columnTitle.includes('first')) {
+            // Check if it's a text column and header contains "first"
+            if (col.type === 'text' && headerText.includes('first')) {
               return true;
             }
             
@@ -1710,21 +1232,21 @@ function App() {
           });
           
           // Fallback: if not found, try to find by checking all text columns
-          // Use column title from mapping instead of col.text
+          // Same approach as Person column - find by type and header text
           if (!firstnameColumn) {
             const textColumns = item.column_values.filter(col => col && col.type === 'text');
             
-            // Try to find First Name in text columns by checking column title from mapping
+            // Try to find First Name in text columns by checking header text
             firstnameColumn = textColumns.find(col => {
-              const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
+              const headerText = (col.text || '').toLowerCase().trim();
               return (
-                columnTitle === 'first name' ||
-                columnTitle === 'firstname' ||
-                columnTitle === 'first-name' ||
-                columnTitle.includes('first name') ||
-                columnTitle.includes('firstname') ||
-                columnTitle === 'სახელი' ||
-                columnTitle.includes('სახელი')
+                headerText === 'first name' ||
+                headerText === 'firstname' ||
+                headerText === 'first-name' ||
+                headerText.includes('first name') ||
+                headerText.includes('firstname') ||
+                headerText === 'სახელი' ||
+                headerText.includes('სახელი')
               );
             });
           }
@@ -1763,181 +1285,463 @@ function App() {
             return false;
           });
 
-          // Find Position column - check by ID and by title from mapping
-          let positionColumn = item.column_values.find(col => {
-            if (!col) return false;
-            
-            const columnId = (col.id || '').toLowerCase();
-            // Get column title from mapping
-            const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-            
-            // Check by column ID (exact matches)
-            if (
-              columnId === 'position' ||
-              columnId === 'role' ||
-              columnId === 'job_title'
-            ) {
-              return true;
+
+          // Track used columns to avoid duplicates
+          const usedColumns = [];
+
+          // First, try to find position column by common patterns in IDs and titles
+          // if (['Lazarei', 'Givi', 'Gujia'].includes(item.name)) {
+          //   console.log('🔍 Starting position column search for item:', item.name);
+          // }
+          // Position column detection - prioritize by type and content
+          let positionColumn = null;
+
+          // Strategy 1: Look for text columns with position-like content
+            const textColumns = item.column_values.filter(col =>
+            (col.type === 'text' || !col.type) &&
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            for (const col of textColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase();
+
+                // Skip email-like values from position detection
+                if (val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val)) {
+                  continue;
+                }
+
+                // Check if the value looks like a position title
+                const positionIndicators = ['ceo', 'cto', 'cfo', 'coo', 'vp', 'director', 'manager', 'supervisor', 'lead', 'head', 'chief', 'executive', 'president', 'officer', 'specialist', 'analyst', 'engineer', 'developer', 'consultant', 'coordinator', 'administrator', 'representative', 'associate', 'senior', 'junior', 'intern'];
+
+                const hasPositionIndicator = positionIndicators.some(indicator => val.includes(indicator));
+
+                // Additional check: must look like a job title
+                const looksLikeJobTitle = val.split(' ').length > 1 || positionIndicators.some(indicator => val.toLowerCase() === indicator);
+
+                if (hasPositionIndicator && looksLikeJobTitle) {
+                  positionColumn = col;
+                  break;
+                }
+              }
             }
-            
-            // Check by column ID (contains)
-            if (
-              columnId.includes('position') ||
-              columnId.includes('role') ||
-              columnId.includes('job_title')
-            ) {
-              return true;
-            }
-            
-            // Check by column title from mapping (exact matches)
-            if (
-              columnTitle === 'position' ||
-              columnTitle === 'role' ||
-              columnTitle === 'job title' ||
-              columnTitle === 'პოზიცია'
-            ) {
-              return true;
-            }
-            
-            // Check by column title from mapping (contains)
-            if (
-              columnTitle.includes('position') ||
-              columnTitle.includes('role') ||
-              columnTitle.includes('job title') ||
-              columnTitle.includes('პოზიცია')
-            ) {
-              return true;
-            }
-            
-            return false;
-          });
-          
-          // Fallback: if not found, try to find by checking all text columns
+
+          // Strategy 2: If no text column found, try findColumn with keywords
           if (!positionColumn) {
-            const textColumns = item.column_values.filter(col => col && col.type === 'text');
-            
-            // Try to find Position in text columns by checking column title from mapping
-            positionColumn = textColumns.find(col => {
-              const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-              return (
-                columnTitle === 'position' ||
-                columnTitle === 'role' ||
-                columnTitle === 'job title' ||
-                columnTitle.includes('position') ||
-                columnTitle.includes('role') ||
-                columnTitle === 'პოზიცია' ||
-                columnTitle.includes('პოზიცია')
-              );
-            });
+            positionColumn = findColumn(item,
+              ['position', 'role', 'job_title', 'title', 'job'],
+              ['position', 'role', 'job title', 'title', 'job'],
+              usedColumns
+            );
+                  }
+
+
+          // Final comprehensive fallback for position
+          if (!positionColumn) {
+
+            // Analyze all available columns for position-like content
+            const allAvailableColumns = item.column_values.filter(col =>
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            // console.log('🔍 Final fallback: Checking allAvailableColumns for position');
+            for (const col of allAvailableColumns) {
+              const extractedVal = extractColumnValue(col);
+              // console.log('🔍 Final fallback: Column', col.id, 'type:', col.type, 'extracted value:', extractedVal);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase().trim();
+                // console.log('🔍 Final fallback: Processing value:', val);
+
+                // Skip if it looks like an email, phone, or very long text
+                const shouldSkip = val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val) || val.length > 50;
+                // console.log('🔍 Final fallback: Should skip?', shouldSkip, '(email/phone/long text check)');
+                if (shouldSkip) {
+                  continue; // Likely email, phone, or long text
+                }
+
+                // Skip if it looks like a person name (common names or capitalized single words)
+                const commonNames = ['david', 'john', 'mike', 'anna', 'maria', 'alex', 'james', 'lisa', 'paul', 'mark', 'sarah', 'daniel', 'jane', 'peter', 'mary', 'robert', 'linda', 'william', 'patricia', 'richard', 'susan', 'joseph', 'jennifer', 'thomas', 'barbara', 'charles', 'elizabeth', 'christopher', 'jessica', 'matthew', 'nancy', 'anthony', 'donna', 'steven', 'michelle', 'andrew', 'laura', 'joshua', 'amy', 'kevin', 'angela', 'brian', 'helen', 'george', 'sandra', 'timothy', 'donna', 'ronald', 'carol', 'jason', 'ruth', 'edward', 'sharon', 'jacob', 'michelle', 'gary', 'karen', 'nicholas', 'betty', 'eric', 'lisa', 'jonathan', 'kimberly', 'stephen', 'deborah', 'larry', 'dorothy', 'justin', 'helen', 'scott', 'anna', 'brandon', 'melissa', 'benjamin', 'emma', 'samuel', 'olivia', 'gregory', 'jessica', 'frank', 'ashley', 'raymond', 'kathleen', 'alexander', 'martha', 'patrick', 'sandra', 'jack', 'stephanie'];
+                const looksLikeName = val.length > 2 && val.length < 20 && val.split(' ').length === 1 &&
+                                     (commonNames.some(name => val.includes(name)) || /^[A-Z]/.test(val.charAt(0)));
+
+                if (looksLikeName) {
+                  continue; // Likely a person name
+                }
+
+                // If it's a reasonable length and contains position-like words
+                if (val.length > 1 && val.length < 100) {
+                  const positionWords = ['ceo', 'vp', 'manager', 'director', 'lead', 'developer', 'engineer', 'specialist', 'analyst', 'consultant', 'coordinator', 'executive', 'senior', 'junior', 'intern', 'პოზიცია', 'მენეჯერი', 'დირექტორი', 'ლიდერი'];
+                  const departmentWords = ['engineering', 'marketing', 'sales', 'hr', 'finance', 'operations', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'human resources', 'customer success', 'product management', 'quality assurance', 'business development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ფინანსები', 'ოპერაციები'];
+
+                  const hasPositionWord = positionWords.some(word => val.includes(word));
+                  const hasDepartmentWord = departmentWords.some(word => val.includes(word));
+
+                  // console.log('🔍 Final fallback: Has position word?', hasPositionWord, 'Has department word?', hasDepartmentWord, 'Length < 30?', val.length < 30);
+
+                  // Only assign as position if it has position words AND doesn't have department words
+                  // This prevents department names like "Design" from being assigned as positions
+                  if (hasPositionWord && !hasDepartmentWord) {
+                    positionColumn = col;
+                    // console.log('✅ Found position column via final fallback:', col.id);
+                    break;
+                  }
+                  // For very short values without department words, still consider as potential position
+                  else if (!hasDepartmentWord && val.length < 20 && val.split(' ').length <= 2) {
+                    positionColumn = col;
+                    // console.log('✅ Found position column via short value fallback:', col.id);
+                    break;
+                  }
+                }
+              }
+            }
           }
-          
-          // Find Department column - similar to Position column
-          let departmentColumn = item.column_values.find(col => {
-            if (!col) return false;
-            
-            const columnId = (col.id || '').toLowerCase();
-            const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-            
-            // Check by column ID
-            if (
-              columnId === 'department' ||
-              columnId.includes('department')
-            ) {
-              return true;
-            }
-            
-            // Check by column title
-            if (
-              columnTitle === 'department' ||
-              columnTitle === 'დეპარტამენტი' ||
-              columnTitle.includes('department') ||
-              columnTitle.includes('დეპარტამენტი')
-            ) {
-              return true;
-            }
-            
-            return false;
-          });
-          
-          // Find Email column - check by ID and title
-          let emailColumn = item.column_values.find(col => {
-            if (!col) return false;
-            const columnId = (col.id || '').toLowerCase();
-            const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-            return columnId === 'email' || 
-                   columnTitle === 'email' ||
-                   columnTitle === 'ელფოსტა' ||
-                   columnTitle.includes('email');
-          });
-          
-          // Find Phone column - check by ID and title
-          let phoneColumn = item.column_values.find(col => {
-            if (!col) return false;
-            const columnId = (col.id || '').toLowerCase();
-            const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-            return columnId === 'phone' || 
-                   columnId === 'mobile' ||
-                   columnTitle === 'phone' ||
-                   columnTitle === 'mobile' ||
-                   columnTitle === 'ტელეფონი' ||
-                   columnTitle.includes('phone') ||
-                   columnTitle.includes('mobile') ||
-                   columnTitle.includes('ტელეფონი');
-          });
-          
-          // Find Manager column - check by ID first, then by title from mapping
-          let managerColumn = item.column_values.find(col => {
-            if (!col) return false;
-            const columnId = (col.id || '').toLowerCase();
-            return columnId === 'manager' || columnId === 'reports_to' || columnId.includes('manager') || columnId.includes('reports_to');
-          });
-          
-          // If not found by ID, try to find by title from mapping
+
+          if (positionColumn) usedColumns.push(positionColumn);
+          console.log('🎯 Final position column result:', positionColumn ? positionColumn.id : 'NOT FOUND');
+
+          // Debug: Show all columns and their detection status
+          console.log(`🔍 ${item.name} - Column detection summary:`);
+          console.log(`   Position: ${positionColumn ? positionColumn.id : 'NOT FOUND'}`);
+          console.log(`   Used columns: [${usedColumns.map(c => c.id).join(', ')}]`);
+
+          const emailColumn = findColumn(item,
+            // IDs - comprehensive
+            ['email', 'email_address', 'e_mail', 'emailaddress', 'contact_email', 'work_email', 'personal_email', 'mail'],
+            // Titles - comprehensive
+            ['email', 'email address', 'e-mail', 'email address', 'contact email', 'work email', 'personal email', 'mail', 'ელ-ფოსტა', 'ელექტრონული ფოსტა', 'ელფოსტა', 'საკონტაქტო ელფოსტა', 'სამუშაო ელფოსტა', 'პირადი ელფოსტა'],
+            usedColumns
+          );
+          if (emailColumn) usedColumns.push(emailColumn);
+
+          const phoneColumn = findColumn(item,
+            // IDs - comprehensive
+            ['phone', 'mobile', 'telephone', 'cell', 'phone_number', 'mobile_number', 'telephone_number', 'cell_number', 'contact_phone', 'work_phone', 'office_phone', 'home_phone'],
+            // Titles - comprehensive
+            ['phone', 'mobile', 'telephone', 'cell', 'phone number', 'mobile number', 'telephone number', 'cell number', 'contact phone', 'work phone', 'office phone', 'home phone', 'ტელეფონი', 'მობილური', 'ტელ', 'ტელეფონის ნომერი', 'მობილურის ნომერი', 'საკონტაქტო ტელეფონი', 'სამუშაო ტელეფონი', 'ოფისის ტელეფონი'],
+            usedColumns
+          );
+          if (phoneColumn) usedColumns.push(phoneColumn);
+
+          let managerColumn = findColumn(item,
+            // IDs - comprehensive
+            ['manager', 'reports_to', 'supervisor', 'boss', 'lead', 'superior', 'direct_manager', 'reporting_manager', 'manager_name', 'supervisor_name', 'boss_name', 'lead_name', 'reporting_to', 'reports_to_manager', 'line_manager', 'direct_supervisor', 'team_lead', 'project_manager'],
+            // Titles - comprehensive with variations
+            ['manager', 'reports to', 'supervisor', 'boss', 'lead', 'superior', 'direct manager', 'reporting manager', 'line manager', 'direct supervisor', 'team lead', 'project manager', 'reporting to', 'reports to manager', 'manager name', 'supervisor name', 'boss name', 'მენეჯერი', 'ხელმძღვანელი', 'ბოსი', 'უფროსი', 'დირექტორი', 'სუპერვაიზერი', 'ლიდერი', 'გუნდის ლიდერი', 'პროექტის მენეჯერი', 'ხელმძღვანელის სახელი'],
+            usedColumns
+          );
+
+          // If not found, try to find any text/people column that might contain manager data
           if (!managerColumn) {
             managerColumn = item.column_values.find(col => {
-              if (!col) return false;
-              const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-              return (
-                columnTitle === 'manager' ||
-                columnTitle === 'reports to' ||
-                columnTitle === 'reports_to' ||
-                columnTitle === 'მენეჯერი' ||
-                columnTitle === 'მენეჯერის სახელი' ||
-                columnTitle.includes('manager') ||
-                columnTitle.includes('reports to') ||
-                columnTitle.includes('მენეჯერი')
-              );
+              if (!col || usedColumns.some(excluded => excluded.id === col.id)) return false;
+
+              const colText = (col.text || '').toLowerCase();
+              const colId = (col.id || '').toLowerCase();
+
+              // Look for text/people columns with manager-related keywords
+              if (col.type === 'text' || col.type === 'people' || !col.type) {
+                const managerKeywords = ['manag', 'superv', 'boss', 'lead', 'report', 'მენეჯ', 'ხელმძ', 'უფროს', 'ბოს', 'ლიდერ'];
+                return managerKeywords.some(keyword =>
+                  colId.includes(keyword) || colText.includes(keyword)
+                );
+              }
+              return false;
             });
+
+            if (managerColumn) {
+            }
           }
-          
-          // Manager column found (no logging needed)
-          
-          // Find Image column - check by ID and title
-          let imageColumn = item.column_values.find(col => {
-            if (!col) return false;
-            const columnId = (col.id || '').toLowerCase();
-            const columnTitle = (columnIdToTitle[col.id] || '').toLowerCase().trim();
-            return col.type === 'file' ||
-                   columnId === 'image' ||
-                   columnId === 'photo' ||
-                   columnId === 'avatar' ||
-                   columnId === 'picture' ||
-                   columnTitle === 'image' ||
-                   columnTitle === 'photo' ||
-                   columnTitle === 'avatar' ||
-                   columnTitle === 'picture' ||
-                   columnTitle === 'სურათი' ||
-                   columnTitle.includes('image') ||
-                   columnTitle.includes('photo') ||
-                   columnTitle.includes('avatar') ||
-                   columnTitle.includes('picture') ||
-                   columnTitle.includes('სურათი');
+
+          // Ultimate fallback: if still not found, look for any text/people column that might be manager
+          if (!managerColumn) {
+            // For now, just look for columns with manager-related content patterns
+            const candidateColumns = item.column_values.filter(col =>
+              (col.type === 'text' || col.type === 'people' || !col.type) &&
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            for (const col of candidateColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal && extractedVal.trim()) {
+                const val = extractedVal.toLowerCase();
+                // Look for patterns that suggest this might be a manager name
+                // (We'll validate this in the second pass)
+                const managerPatterns = ['manager', 'director', 'lead', 'supervisor', 'boss', 'head', 'chief', 'მენეჯერი', 'ხელმძღვანელი', 'დირექტორი', 'უფროსი', 'ბოსი'];
+
+                if (managerPatterns.some(pattern => val.includes(pattern)) ||
+                    val.length > 3) { // Any reasonable-length text could be a manager name
+                  managerColumn = col;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (managerColumn) usedColumns.push(managerColumn);
+
+          // Extract additional common columns
+          let departmentColumn = null;
+
+          // Strategy 1: Look for dropdown columns with department-like content
+          const deptDropdownColumns = item.column_values.filter(col =>
+            col.type === 'dropdown' &&
+            !usedColumns.some(excluded => excluded.id === col.id)
+          );
+
+          for (const col of deptDropdownColumns) {
+            const extractedVal = extractColumnValue(col);
+            if (extractedVal) {
+              const val = extractedVal.toLowerCase();
+              // Check if the value looks like a department name
+              const deptIndicators = ['engineering', 'marketing', 'sales', 'hr', 'finance', 'operations', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'management', 'human resources', 'customer success', 'product management', 'quality assurance', 'business development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ადამიანური', 'რესურსები', 'ფინანსები', 'ოპერაციები', 'დიზაინი', 'პროდუქტი', 'მხარდაჭერა'];
+
+              if (deptIndicators.some(indicator => val.includes(indicator))) {
+                departmentColumn = col;
+                break;
+              }
+            }
+          }
+
+          // Strategy 2: If no dropdown column found, try findColumn with keywords
+          if (!departmentColumn) {
+            departmentColumn = findColumn(item,
+              ['department', 'dept', 'division', 'group'],
+              ['department', 'dept', 'division', 'group'],
+              usedColumns
+            );
+          }
+
+          // Ultimate fallback: if still not found, look for any text/dropdown column that might be department
+          if (!departmentColumn) {
+            const candidateColumns = item.column_values.filter(col =>
+              (col.type === 'text' || col.type === 'dropdown' || !col.type) &&
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            // Strategy 1: Look for common department values in the column data
+            for (const col of candidateColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase();
+
+                // Skip email-like, phone-like, or very long values
+                if (val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val) || val.length > 50) {
+                  continue;
+                }
+
+                // Check if the value looks like a department name
+                const deptIndicators = ['engineering', 'marketing', 'sales', 'hr', 'finance', 'operations', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'management', 'human resources', 'customer success', 'product management', 'quality assurance', 'business development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ადამიანური', 'რესურსები', 'ფინანსები', 'ოპერაციები', 'დიზაინი', 'პროდუქტი', 'მხარდაჭერა'];
+
+                // Exclude position-like words
+                const positionWords = ['ceo', 'vp', 'manager', 'director', 'lead', 'developer', 'engineer', 'specialist', 'analyst', 'consultant', 'coordinator', 'executive', 'senior', 'junior', 'intern', 'პოზიცია', 'მენეჯერი', 'დირექტორი', 'ლიდერი'];
+
+                const hasDeptWord = deptIndicators.some(indicator => val.includes(indicator));
+                const hasPositionWord = positionWords.some(word => val.includes(word));
+
+                // Don't assign as department if it has position words or looks like a name
+                const looksLikeName = val.length > 3 && val.length < 20 && /^[A-Z][a-z]+$/.test(val.charAt(0).toUpperCase() + val.slice(1)) && val.split(' ').length === 1;
+
+                if (hasDeptWord && !hasPositionWord && !looksLikeName) {
+                  departmentColumn = col;
+                  break;
+                }
+              }
+            }
+
+            // Strategy 2: Position-based guessing - department is often after position
+            if (!departmentColumn && candidateColumns.length >= 4) {
+              // Department might be the 4th, 5th, or 6th column
+              const likelyPositions = [3, 4, 5]; // 0-indexed
+              for (const pos of likelyPositions) {
+                if (pos < candidateColumns.length) {
+                  const candidateCol = candidateColumns[pos];
+                  const extractedVal = extractColumnValue(candidateCol);
+                  if (extractedVal && extractedVal.length > 0 && extractedVal.length < 100) {
+                    departmentColumn = candidateCol;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Final comprehensive fallback for department
+          if (!departmentColumn) {
+
+            const allAvailableColumns = item.column_values.filter(col =>
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            for (const col of allAvailableColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase().trim();
+
+                // Skip if it looks like an email, phone, or very long text
+                if (val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val) || val.length > 50) {
+                  continue;
+                }
+
+                // Check for department-like content
+                if (val.length > 1 && val.length < 50) {
+                  const deptWords = ['engineering', 'marketing', 'sales', 'finance', 'operations', 'hr', 'human', 'resources', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ფინანსები', 'ოპერაციები'];
+                  const positionWords = ['ceo', 'vp', 'manager', 'director', 'lead', 'developer', 'engineer', 'specialist', 'analyst', 'consultant', 'coordinator', 'executive', 'senior', 'junior', 'intern', 'პოზიცია', 'მენეჯერი', 'დირექტორი', 'ლიდერი'];
+
+                  const hasDeptWord = deptWords.some(word => val.includes(word));
+                  const hasPositionWord = positionWords.some(word => val.includes(word));
+
+                  // Additional check: exclude values that look like names (capitalized single words or common names)
+                  const looksLikeName = val.length > 2 && val.length < 20 && val.split(' ').length === 1 &&
+                                       /^[A-Z]/.test(val.charAt(0)) && !hasDeptWord;
+
+                  // Only assign as department if it has department words AND doesn't have position words AND doesn't look like a name
+                  if (hasDeptWord && !hasPositionWord && !looksLikeName) {
+                    departmentColumn = col;
+                    // console.log('✅ Found department column via final fallback:', col.id);
+                    break;
+                  }
+                  // For single words that look like department names (but not positions or names)
+                  if (!hasPositionWord && val.length > 3 && val.length < 30 && !val.includes(' ') && !looksLikeName) {
+                    // Additional check: avoid common name-like words
+                    const commonNames = ['david', 'john', 'mike', 'anna', 'maria', 'alex', 'james', 'lisa', 'paul', 'mark', 'sarah', 'daniel', 'jane', 'peter', 'mary', 'robert', 'linda', 'william', 'patricia', 'richard', 'susan', 'joseph', 'jennifer', 'thomas', 'barbara', 'charles', 'elizabeth', 'christopher', 'jessica', 'matthew', 'nancy', 'anthony', 'donna', 'steven', 'michelle', 'andrew', 'laura', 'joshua', 'amy', 'kevin', 'angela', 'brian', 'helen', 'george', 'sandra', 'timothy', 'donna', 'ronald', 'carol', 'jason', 'ruth', 'edward', 'sharon', 'jacob', 'michelle', 'gary', 'karen', 'nicholas', 'betty', 'eric', 'lisa', 'jonathan', 'kimberly', 'stephen', 'deborah', 'larry', 'dorothy', 'justin', 'helen', 'scott', 'anna', 'brandon', 'melissa', 'benjamin', 'emma', 'samuel', 'olivia', 'gregory', 'jessica', 'frank', 'ashley', 'raymond', 'kathleen', 'alexander', 'martha', 'patrick', 'sandra', 'jack', 'stephanie'];
+                    if (!commonNames.some(name => val.toLowerCase().includes(name.toLowerCase()))) {
+                      departmentColumn = col;
+                      // console.log('✅ Found department column via single word fallback:', col.id);
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          if (departmentColumn) usedColumns.push(departmentColumn);
+          console.log(`   Department: ${departmentColumn ? departmentColumn.id : 'NOT FOUND'}`);
+          console.log(`   Used columns after dept: [${usedColumns.map(c => c.id).join(', ')}]`);
+          // Log column assignments for debugging
+          console.log(`📊 ${item.name} Column assignments:`, {
+            position: positionColumn?.id,
+            department: departmentColumn?.id,
+            usedColumns: usedColumns.map(col => col.id)
           });
-          
-          // Save image column ID to state (only once, on first item)
-          if (imageColumn && !imageColumnId && index === 0) {
-            setImageColumnId(imageColumn.id);
-          }
+
+          const locationColumn = findColumn(item,
+            // IDs
+            ['location', 'office', 'city', 'address', 'place'],
+            // Titles
+            ['location', 'office', 'city', 'address', 'place', 'მდებარეობა', 'ოფისი', 'ქალაქი', 'ადგილი'],
+            usedColumns
+          );
+          if (locationColumn) usedColumns.push(locationColumn);
+
+          const startDateColumn = findColumn(item,
+            // IDs
+            ['start_date', 'hire_date', 'joined_date', 'employment_date', 'join_date'],
+            // Titles
+            ['start date', 'hire date', 'joined date', 'employment date', 'join date', 'დაწყების თარიღი', 'დასაქმების თარიღი', 'თარიღი'],
+            usedColumns
+          );
+          if (startDateColumn) usedColumns.push(startDateColumn);
+
+          const salaryColumn = findColumn(item,
+            // IDs
+            ['salary', 'compensation', 'pay', 'wage', 'income'],
+            // Titles
+            ['salary', 'compensation', 'pay', 'wage', 'income', 'ხელფასი', 'ანაზღაურება'],
+            usedColumns
+          );
+          if (salaryColumn) usedColumns.push(salaryColumn);
+
+          const addressColumn = findColumn(item,
+            // IDs
+            ['address', 'home_address', 'street_address'],
+            // Titles
+            ['address', 'home address', 'street address', 'მისამართი', 'სახლი'],
+            usedColumns
+          );
+          if (addressColumn) usedColumns.push(addressColumn);
+
+          const notesColumn = findColumn(item,
+            // IDs
+            ['notes', 'comments', 'description', 'remarks', 'additional_info'],
+            // Titles
+            ['notes', 'comments', 'description', 'remarks', 'additional info', 'შენიშვნები', 'კომენტარები', 'აღწერა'],
+            usedColumns
+          );
+          if (notesColumn) usedColumns.push(notesColumn);
+
+          // Extract numeric columns - enhanced search by ID and title
+          const numberColumns = item.column_values.filter(col => {
+            if (!col) return false;
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase();
+
+            // Check by type
+            if (col.type === 'numbers' || col.type === 'rating' || col.type === 'progress') {
+              return true;
+            }
+
+            // Check by ID
+            const numericIds = ['salary', 'compensation', 'pay', 'wage', 'income', 'experience', 'years', 'age', 'rating', 'score', 'numbers', 'numbers0', 'numbers1', 'numbers2', 'numbers3'];
+            if (numericIds.some(id => columnId.includes(id))) {
+              return true;
+            }
+
+            // Check by title
+            const numericTitles = ['salary', 'pay', 'compensation', 'experience', 'years', 'age', 'rating', 'score', 'ხელფასი', 'გამოცდილება', 'წლები', 'ასაკი', 'რეიტინგი'];
+            return numericTitles.some(title => columnText.includes(title));
+          });
+
+          // Extract date columns - enhanced search by ID and title
+          const dateColumns = item.column_values.filter(col => {
+            if (!col) return false;
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase();
+
+            // Check by type
+            if (col.type === 'date') {
+              return true;
+            }
+
+            // Check by ID
+            const dateIds = ['start_date', 'hire_date', 'joined_date', 'employment_date', 'join_date', 'birth_date', 'birthday', 'date', 'date0', 'date1', 'date2', 'date3', 'date4'];
+            if (dateIds.some(id => columnId.includes(id))) {
+              return true;
+            }
+
+            // Check by title
+            const dateTitles = ['date', 'start', 'hire', 'join', 'birth', 'birthday', 'თარიღი', 'დაბადების', 'დაწყება', 'დასაქმება'];
+            return dateTitles.some(title => columnText.includes(title));
+          });
+
+          // Extract dropdown/status columns - enhanced search by ID and title
+          const dropdownColumns = item.column_values.filter(col => {
+            if (!col) return false;
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase();
+
+            // Skip columns we've already handled
+            if (columnId === 'position' || columnId === 'department' || (columnId.includes('text') && ['პოზიცია', 'განყოფილება'].some(title => columnText.includes(title)))) return false;
+
+            // Check by type
+            if (col.type === 'dropdown' || col.type === 'status') {
+              return true;
+            }
+
+            // Check by ID
+            const statusIds = ['status', 'state', 'type', 'category', 'level', 'priority', 'employment_type', 'contract_type', 'status0', 'status1', 'status2'];
+            if (statusIds.some(id => columnId.includes(id))) {
+              return true;
+            }
+
+            // Check by title
+            const statusTitles = ['status', 'state', 'type', 'category', 'level', 'priority', 'სტატუსი', 'ტიპი', 'კატეგორია', 'დონე', 'ხელშეკრულება'];
+            return statusTitles.some(title => columnText.includes(title));
+          });
           
           // Find Status column (type === 'status')
           const statusColumn = item.column_values.find(col => col.type === 'status');
@@ -1958,17 +1762,43 @@ function App() {
             }
           }
 
-          // Build full name - prioritize Item name, then First Name column
-          let fullName = item.name; // Default fallback
+          // Find person type columns (these contain user information)
+          const personColumns = item.column_values.filter(col => col.type === 'people');
+          let personData = null;
+          let personNameFromText = null; // Person column-ის text field-იდან სახელი
+
+          if (personColumns.length > 0) {
+            const personColumn = personColumns[0];
+            
+            // პირველი პრიორიტეტი: Person column-ის text field-ში არის რეალური სახელი
+            if (personColumn.text && personColumn.text.trim()) {
+              personNameFromText = personColumn.text.trim();
+            }
+            
+            // მეორე პრიორიტეტი: value field-იდან JSON parse
+            try {
+              // Person columns have JSON data in the value field
+              const personValue = JSON.parse(personColumn.value || '{}');
+              if (personValue.personsAndTeams && personValue.personsAndTeams.length > 0) {
+                personData = personValue.personsAndTeams[0];
+              }
+              } catch (e) {
+                // Error parsing person data
+              }
+          }
+
+          // Build full name - prioritize Item name (monday.com item title), then Person column, then other columns
+          let fullName = item.name; // Primary source: Item name (monday.com item title)
 
           // Extract value from First Name column
-          // First check text field, then value field
+          // Same logic as Person column: first check text field, then value field
           let firstNameValue = null;
           if (firstnameColumn) {
             // პირველი პრიორიტეტი: First Name column-ის text field-ში შეიძლება იყოს რეალური მნიშვნელობა
+            // (როგორც Person column-ში text field შეიცავს person-ის სახელს)
             const textValue = firstnameColumn.text || '';
             const textLower = textValue.toLowerCase().trim();
-            
+
             // Check if text field contains actual value (not column header name)
             if (
               textValue.trim() &&
@@ -1981,7 +1811,7 @@ function App() {
             ) {
               firstNameValue = textValue.trim();
             }
-            
+
             // მეორე პრიორიტეტი: value field-იდან (JSON ან plain text)
             if (!firstNameValue || !firstNameValue.trim()) {
               if (firstnameColumn.value) {
@@ -1995,7 +1825,7 @@ function App() {
                 }
               }
             }
-            
+
             // Clean up the value
             if (firstNameValue) {
               firstNameValue = String(firstNameValue).trim();
@@ -2012,7 +1842,7 @@ function App() {
                 lastNameValue = lastnameColumn.value;
               }
             }
-            
+
             if (!lastNameValue || !lastNameValue.trim()) {
               const textValue = lastnameColumn.text || '';
               const textLower = textValue.toLowerCase().trim();
@@ -2027,929 +1857,451 @@ function App() {
                 lastNameValue = textValue.trim();
               }
             }
-            
+
             if (lastNameValue) {
               lastNameValue = String(lastNameValue).trim();
             }
           }
 
-          // Priority order: Item name > First Name column
-          
-          // First priority: Item name (primary source for employee names)
+          // Priority order: Item name (primary) > Person column text > First Name column > Person data
+
+          // Primary: Item name (monday.com item title) - this is what user wants
           if (item.name && item.name.trim()) {
             fullName = item.name.trim();
           }
-          // Second priority: First Name column
+          // Fallback 1: Person column text field (contains real person name)
+          else if (personNameFromText && personNameFromText.trim()) {
+            fullName = personNameFromText.trim();
+          }
+          // Fallback 2: First Name column (what user wants)
           else if (firstNameValue && firstNameValue.trim()) {
             const firstName = firstNameValue.trim();
             const lastName = lastNameValue ? lastNameValue.trim() : '';
             fullName = lastName ? `${firstName} ${lastName}` : firstName;
           }
+          // Fallback 3: Person data from Person column value (JSON)
+          else if (personData && personData.first_name) {
+            const firstName = personData.first_name;
+            const lastName = personData.last_name || '';
+            fullName = `${firstName} ${lastName}`.trim();
+          }
 
           // Generate manager ID from manager column if available
-          // Will be resolved in second pass after all employees are created
-          let managerName = null;
-          if (managerColumn) {
-            // First priority: text field (contains actual manager name)
-            if (managerColumn.text && managerColumn.text.trim()) {
-              const textValue = managerColumn.text.trim();
-              const textLower = textValue.toLowerCase().trim();
-              
-              // Check if text field contains actual value (not column header name)
-              if (
-                textValue &&
-                textLower !== 'manager' &&
-                textLower !== 'reports to' &&
-                textLower !== 'reports_to' &&
-                textLower !== 'მენეჯერი' &&
-                textLower !== 'მენეჯერის სახელი' &&
-                !textLower.includes('manager') &&
-                !textLower.includes('reports to')
-              ) {
-                managerName = textValue;
-              }
-            }
-            
-            // Second priority: value field (JSON parse if needed)
-            if (!managerName || !managerName.trim()) {
-              if (managerColumn.value) {
-                try {
-                  const parsed = JSON.parse(managerColumn.value);
-                  
-                  // If dropdown/status column, check for labels array
-                  if (managerColumnInfoLocal && 
-                      (managerColumnInfoLocal.type === 'dropdown' || managerColumnInfoLocal.type === 'status') &&
-                      parsed.labels && Array.isArray(parsed.labels) && parsed.labels.length > 0 &&
-                      managerColumnInfoLocal.labels) {
-                    // Get first label ID from array
-                    const labelId = parsed.labels[0];
-                    // Look up label text from labels object
-                    const labelText = managerColumnInfoLocal.labels[labelId];
-                    if (labelText) {
-                      managerName = String(labelText).trim();
-                    }
-                  }
-                  
-                  // If not found from labels, try other JSON structures
-                  if (!managerName || !managerName.trim()) {
-                    managerName = parsed.text || parsed.value || parsed.name || managerColumn.value;
-                    if (managerName) {
-                      managerName = String(managerName).trim();
-                    }
-                  }
-                } catch (e) {
-                  // If not JSON, use value directly as string
-                  managerName = String(managerColumn.value).trim();
-                }
-              }
-            }
-            
-            // Clean up the value
-            if (managerName) {
-              managerName = managerName.trim();
-            }
-          }
+          // We'll set this in the second pass after all employees are created
+          let managerId = null;
 
           // Extract position - prioritize positionColumn, then statusColumn, then default
           let positionValue = 'Employee';
-          
-          if (positionColumn) {
-            // First priority: text field (cell value)
-            if (positionColumn.text && positionColumn.text.trim()) {
-              const textValue = positionColumn.text.trim();
-              // Check if text field contains actual value (not column header name)
-              const columnTitle = (columnIdToTitle[positionColumn.id] || '').toLowerCase().trim();
-              if (textValue.toLowerCase() !== columnTitle) {
-                positionValue = textValue;
-              }
-            }
-            
-            // Second priority: value field (JSON or plain text)
-            if ((!positionValue || positionValue === 'Employee') && positionColumn.value) {
-              try {
-                const parsed = JSON.parse(positionColumn.value);
-                // Try different possible JSON structures
-                let extractedValue = parsed.text || parsed.value || parsed.name || positionColumn.value;
-                
-                // If extractedValue is still a JSON string (e.g., '{"text":"Financial Analyst"}'), parse it again
-                if (typeof extractedValue === 'string' && extractedValue.trim().startsWith('{')) {
-                  try {
-                    const nestedParsed = JSON.parse(extractedValue);
-                    extractedValue = nestedParsed.text || nestedParsed.value || nestedParsed.name || extractedValue;
-                  } catch (e) {
-                    // Not nested JSON, use as is
-                  }
-                }
-                
-                positionValue = extractedValue;
-              } catch (e) {
-                // If not JSON, use value directly as string
-                positionValue = positionColumn.value;
-              }
-            
-              // Clean up the value
-              if (positionValue) {
-                positionValue = String(positionValue).trim();
-                // Remove any remaining JSON-like structure if it's still a string
-                if (positionValue.startsWith('{') && positionValue.includes('"text"')) {
-                  try {
-                    const finalParsed = JSON.parse(positionValue);
-                    positionValue = finalParsed.text || finalParsed.value || finalParsed.name || positionValue;
-                  } catch (e) {
-                    // Ignore parsing errors
-                  }
-                }
-              }
-            }
+          const extractedPosition = positionColumn ? extractColumnValue(positionColumn) : null;
+          // Debug: log position detection
+          // if (['Lazarei', 'Givi', 'Gujia'].includes(item.name)) {
+          //   console.log(`🎯 ${item.name} Position detection:`, { positionColumn: positionColumn?.id, extractedPosition, statusValue, positionValue });
+          // }
+          if (extractedPosition) {
+            positionValue = extractedPosition;
           } else if (statusValue) {
             // Use Status column value as position (e.g., "Done", "Working on it", "Stuck")
             positionValue = statusValue;
           }
-          
-          // Final fallback: only use "Employee" if no position found
-          if (!positionValue || positionValue.trim() === '') {
-            positionValue = 'Employee';
-          }
 
-          // Extract department - similar to position extraction
-          let departmentValue = 'General'; // Default fallback
-          
-          if (departmentColumn) {
-            // First priority: text field (cell value)
-            if (departmentColumn.text && departmentColumn.text.trim()) {
-              const textValue = departmentColumn.text.trim();
-              const columnTitle = (columnIdToTitle[departmentColumn.id] || '').toLowerCase().trim();
-              // Check if text field contains actual value (not column header name)
-              if (textValue.toLowerCase() !== columnTitle) {
-                departmentValue = textValue;
-              }
-            }
-            
-            // Second priority: value field (JSON or plain text)
-            if ((!departmentValue || departmentValue === 'General') && departmentColumn.value) {
-              try {
-                const parsed = JSON.parse(departmentColumn.value);
-                let extractedValue = parsed.text || parsed.value || parsed.name || departmentColumn.value;
-                
-                // If extractedValue is still a JSON string, parse it again
-                if (typeof extractedValue === 'string' && extractedValue.trim().startsWith('{')) {
-                  try {
-                    const nestedParsed = JSON.parse(extractedValue);
-                    extractedValue = nestedParsed.text || nestedParsed.value || nestedParsed.name || extractedValue;
-                  } catch (e) {
-                    // Not nested JSON, use as is
-                  }
-                }
-                
-                departmentValue = extractedValue;
-              } catch (e) {
-                // If not JSON, use value directly as string
-                departmentValue = departmentColumn.value;
-              }
-              
-              // Clean up the value
-              if (departmentValue) {
-                departmentValue = String(departmentValue).trim();
-                // Remove any remaining JSON-like structure if it's still a string
-                if (departmentValue.startsWith('{') && departmentValue.includes('"text"')) {
-                  try {
-                    const finalParsed = JSON.parse(departmentValue);
-                    departmentValue = finalParsed.text || finalParsed.value || finalParsed.name || departmentValue;
-                  } catch (e) {
-                    // Ignore parsing errors
-                  }
-                }
-              }
-            }
-          }
 
-          // Extract email - check both text and value fields
-          let emailValue = null;
-          if (emailColumn) {
-            // First priority: text field
-            if (emailColumn.text && emailColumn.text.trim()) {
-              const textValue = emailColumn.text.trim();
-              const columnTitle = (columnIdToTitle[emailColumn.id] || '').toLowerCase().trim();
-              if (textValue.toLowerCase() !== columnTitle && textValue.includes('@')) {
-                emailValue = textValue;
-              }
-            }
-            
-            // Second priority: value field
-            if (!emailValue && emailColumn.value) {
-              try {
-                const parsed = JSON.parse(emailColumn.value);
-                emailValue = parsed.email || parsed.text || parsed.value || emailColumn.value;
-                if (emailValue && typeof emailValue === 'string' && !emailValue.includes('@')) {
-                  emailValue = null; // Invalid email format
-                }
-              } catch (e) {
-                // If not JSON, check if it's a valid email
-                if (emailColumn.value.includes('@')) {
-                  emailValue = emailColumn.value;
-                }
-              }
-            }
-          }
+          // Extract values from additional columns
+          const departmentValue = departmentColumn ? extractColumnValue(departmentColumn) || 'General' : 'General';
+          const locationValue = locationColumn ? extractColumnValue(locationColumn) : null;
+          const startDateValue = startDateColumn ? extractColumnValue(startDateColumn) : null;
+          const salaryValue = salaryColumn ? extractColumnValue(salaryColumn) : null;
+          const addressValue = addressColumn ? extractColumnValue(addressColumn) : null;
+          const notesValue = notesColumn ? extractColumnValue(notesColumn) : null;
 
-          // Extract phone - check both text and value fields
-          let phoneValue = null;
-          if (phoneColumn) {
-            // First priority: text field
-            if (phoneColumn.text && phoneColumn.text.trim()) {
-              const textValue = phoneColumn.text.trim();
-              const columnTitle = (columnIdToTitle[phoneColumn.id] || '').toLowerCase().trim();
-              if (textValue.toLowerCase() !== columnTitle) {
-                phoneValue = textValue;
-              }
-            }
-            
-            // Second priority: value field
-            if (!phoneValue && phoneColumn.value) {
-              try {
-                const parsed = JSON.parse(phoneColumn.value);
-                phoneValue = parsed.phone || parsed.text || parsed.value || phoneColumn.value;
-              } catch (e) {
-                // If not JSON, use value directly as string
-                phoneValue = phoneColumn.value;
-              }
-            }
-          }
-          
-          // Extract image - check file column value
-          let imageValue = null;
-          if (imageColumn) {
-            // First priority: Check if FileValue fragment provided files directly
-            if (imageColumn.files && Array.isArray(imageColumn.files) && imageColumn.files.length > 0) {
-              // Try to get URL from FileAssetValue or FileDocValue
-              const firstFile = imageColumn.files[0];
-              if (firstFile.asset && firstFile.asset.url) {
-                imageValue = firstFile.asset.url;
-              } else if (firstFile.doc && firstFile.doc.url) {
-                imageValue = firstFile.doc.url;
-              }
-            }
-            
-            // Second priority: File column value contains JSON with files array
-            if (!imageValue && imageColumn.value) {
-              try {
-                const parsed = JSON.parse(imageColumn.value);
-                // Check if files array exists and has at least one file
-                if (parsed.files && Array.isArray(parsed.files) && parsed.files.length > 0) {
-                  // Try to get URL from first file
-                  const firstFile = parsed.files[0];
-                  if (firstFile.url) {
-                    imageValue = firstFile.url;
-                  } else if (firstFile.asset && firstFile.asset.url) {
-                    imageValue = firstFile.asset.url;
-                  } else if (firstFile.doc && firstFile.doc.url) {
-                    imageValue = firstFile.doc.url;
-                  }
-                }
-              } catch (e) {
-                // If not JSON, try to parse as string
-                console.warn('Failed to parse image column value:', e);
-              }
-            }
-          }
-          
-          // Collect all other columns as custom fields
-          // List of columns that are already handled (should be skipped)
-          const handledColumnIds = new Set([
-            firstnameColumn?.id,
-            lastnameColumn?.id,
-            positionColumn?.id,
-            departmentColumn?.id,
-            emailColumn?.id,
-            phoneColumn?.id,
-            imageColumn?.id, // Add image column to handled list
-            managerColumn?.id,
-            statusColumn?.id
-          ].filter(Boolean));
-          
-          const customFieldsData = {};
-          const fieldNameToColumnIdLocal = {};
-          
-          // Process all column values that are not already handled
-          item.column_values.forEach(col => {
-            if (!col || !col.id) return;
-            
-            // Skip columns that are already handled
-            if (handledColumnIds.has(col.id)) return;
-            
-            // Get column title from mapping
-            const columnTitle = columnIdToTitle[col.id] || col.id;
-            
-            // Extract value from column
-            let extractedValue = null;
-            
-            // First priority: text field (cell value)
+
+          // Extract numeric values
+          const numericValues = {};
+          numberColumns.forEach(col => {
             if (col.text && col.text.trim()) {
-              const textValue = col.text.trim();
-              const columnTitleLower = columnTitle.toLowerCase().trim();
-              // Check if text field contains actual value (not column header name)
-              if (textValue.toLowerCase() !== columnTitleLower) {
-                extractedValue = textValue;
+              // Try to determine field name from column ID or text
+              let fieldName = col.id;
+              if (!fieldName || fieldName === 'numbers') {
+                fieldName = col.text.toLowerCase().replace(/[^a-z0-9]/g, '_');
               }
-            }
-            
-            // Second priority: value field (JSON or plain text)
-            if (!extractedValue && col.value) {
-              try {
-                const parsed = JSON.parse(col.value);
-                
-                // Handle different column types
-                if (col.type === 'dropdown' || col.type === 'status') {
-                  // For dropdown/status, try to get label text
-                  if (parsed.labels && Array.isArray(parsed.labels) && parsed.labels.length > 0) {
-                    // If we have label IDs, try to get text from column settings
-                    // For now, use the first label ID or text
-                    extractedValue = parsed.labels[0];
-                  } else {
-                    extractedValue = parsed.text || parsed.value || col.value;
-                  }
-                } else if (col.type === 'email') {
-                  extractedValue = parsed.email || parsed.text || parsed.value || col.value;
-                } else if (col.type === 'phone') {
-                  extractedValue = parsed.phone || parsed.text || parsed.value || col.value;
-                } else {
-                  // For other types, try common JSON structures
-                  extractedValue = parsed.text || parsed.value || parsed.name || col.value;
-                }
-                
-                // If extractedValue is still a JSON string, parse it again
-                if (typeof extractedValue === 'string' && extractedValue.trim().startsWith('{')) {
-                  try {
-                    const nestedParsed = JSON.parse(extractedValue);
-                    extractedValue = nestedParsed.text || nestedParsed.value || nestedParsed.name || extractedValue;
-                  } catch (e) {
-                    // Not nested JSON, use as is
-                  }
-                }
-              } catch (e) {
-                // If not JSON, use value directly as string
-                extractedValue = col.value;
-              }
-            }
-            
-            // Clean up the value
-            if (extractedValue) {
-              extractedValue = String(extractedValue).trim();
-              // Remove any remaining JSON-like structure if it's still a string
-              if (extractedValue.startsWith('{') && extractedValue.includes('"text"')) {
-                try {
-                  const finalParsed = JSON.parse(extractedValue);
-                  extractedValue = finalParsed.text || finalParsed.value || finalParsed.name || extractedValue;
-                } catch (e) {
-                  // Ignore parsing errors
-                }
-              }
-              
-              // Use column title as field name (sanitize for use as object key)
-              const fieldName = columnTitle.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-              if (fieldName) {
-                // Store mapping between field name and column ID
-                fieldNameToColumnIdLocal[fieldName] = col.id;
-                if (extractedValue) {
-                  customFieldsData[fieldName] = extractedValue;
-                }
-              }
-            } else {
-              // Even if no value, store the mapping for future use
-              const fieldName = columnTitle.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-              if (fieldName) {
-                fieldNameToColumnIdLocal[fieldName] = col.id;
-              }
+              numericValues[fieldName] = col.text.trim();
             }
           });
-          
-          // Update field name to column ID mapping state
-          if (Object.keys(fieldNameToColumnIdLocal).length > 0) {
-            setFieldNameToColumnId(prev => ({ ...prev, ...fieldNameToColumnIdLocal }));
+
+          // Extract date values
+          const dateValues = {};
+          dateColumns.forEach(col => {
+            if (col.text && col.text.trim()) {
+              let fieldName = col.id;
+              if (!fieldName || fieldName === 'date') {
+                fieldName = col.text.toLowerCase().replace(/[^a-z0-9]/g, '_');
+              }
+              dateValues[fieldName] = col.text.trim();
+            }
+          });
+
+          // Extract dropdown/status values
+          const dropdownValues = {};
+          dropdownColumns.forEach(col => {
+            if (col.text && col.text.trim() && col.id !== 'position') { // Skip position as it's handled separately
+              let fieldName = col.id;
+              if (!fieldName || ['dropdown', 'status'].includes(fieldName)) {
+                fieldName = col.text.toLowerCase().replace(/[^a-z0-9]/g, '_');
+              }
+              dropdownValues[fieldName] = col.text.trim();
+            }
+          });
+
+          // Extract file columns for images
+          let imageUrl = null;
+          const fileColumns = item.column_values.filter(col => col.type === 'file' || col.type === 'files');
+          if (fileColumns.length > 0) {
+            // Use the first file column found, or look for one with "image", "photo", "avatar" in the ID/text
+            let imageColumn = fileColumns.find(col =>
+              (col.id && (col.id.includes('image') || col.id.includes('photo') || col.id.includes('avatar'))) ||
+              (col.text && (col.text.toLowerCase().includes('image') || col.text.toLowerCase().includes('photo') || col.text.toLowerCase().includes('avatar')))
+            );
+
+            // If no specific image column found, use the first file column
+            if (!imageColumn && fileColumns.length > 0) {
+              imageColumn = fileColumns[0];
+            }
+
+            if (imageColumn) {
+              imageUrl = extractColumnValue(imageColumn);
+            }
           }
-          
-          return {
+
+          const employeeData = {
             id: parseInt(item.id),
-            mondayItemId: item.id, // Store Monday.com item ID for sync
             name: fullName,
             position: positionValue,
-            department: departmentValue || 'General', // Use extracted department or default
-            email: emailValue || `${fullName.toLowerCase().replace(/\s+/g, '.')}@company.com`, // Use extracted email or fallback
-            phone: phoneValue || `+1-555-${String(100 + index).padStart(3, '0')}-${String(1000 + index).padStart(4, '0')}`, // Use extracted phone or fallback
-            managerId: null, // Will be resolved in second pass
-            managerName: managerName, // Store manager name for resolution
-            image: imageValue || null, // Use extracted image URL or null
-            ...customFieldsData // Spread all custom fields into employee object
+            department: departmentValue,
+            email: personData?.email || (emailColumn ? extractColumnValue(emailColumn) : null) || `${fullName.toLowerCase().replace(' ', '.')}@company.com`,
+            phone: phoneColumn ? extractColumnValue(phoneColumn) : `+1-555-${String(100 + index).padStart(3, '0')}-${String(1000 + index).padStart(4, '0')}`,
+            managerId: managerId,
+            image: imageUrl || personData?.photo_original || personData?.photo_small || null,
+            // Additional fields from monday.com
+            location: locationValue,
+            startDate: startDateValue,
+            salary: salaryValue,
+            address: addressValue,
+            notes: notesValue,
+            // Store dynamic fields
+            ...numericValues,
+            ...dateValues,
+            ...dropdownValues,
+            // Store whether we have a valid name from any source
+            hasValidName: !!fullName && fullName.trim().length > 0
           };
+
+
+          return employeeData;
+        })
+        // Filter out null items (items without column_values) and items that don't have valid names
+        .filter(emp => {
+          return emp !== null && emp.hasValidName;
         });
 
-        // Second pass: Apply structured hierarchical organization (like sample data)
-        if (mondayEmployees.length > 0) {
-          // Step 1: Identify and structure C-level executives
-          const cLevelTitles = ['CTO', 'Chief Technology Officer', 'CFO', 'Chief Financial Officer', 'COO', 'Chief Operating Officer'];
-          const vpTitles = ['VP', 'Vice President', 'Director'];
+        // Second pass: set manager relationships
+        // We need to match employees back to their original items
+        mondayEmployees.forEach((employee) => {
+          // Find the corresponding item by matching the employee ID
+          const correspondingItem = items.find(item => parseInt(item.id) === employee.id);
 
-          // Find or create CEO
-          let ceo = mondayEmployees.find(emp =>
-            emp.position && (
-              emp.position.toLowerCase().includes('ceo') ||
-              emp.position.toLowerCase().includes('chief executive') ||
-              emp.position.toLowerCase().includes('founder') ||
-              emp.position.toLowerCase().includes('president')
-            )
-          );
+          if (correspondingItem) {
 
-          // If no CEO found, make first employee CEO
-          if (!ceo) {
-            ceo = mondayEmployees[0];
-            ceo.managerId = null;
-          } else {
-            ceo.managerId = null;
-          }
+            // First try standard manager column detection
+            let managerColumn = findColumn(correspondingItem,
+              // IDs
+              ['manager', 'reports_to', 'supervisor', 'boss', 'lead'],
+              // Titles
+              ['manager', 'reports to', 'supervisor', 'boss', 'lead', 'მენეჯერი', 'ხელმძღვანელი', 'ბოსი'],
+              ['text_mkz2n97z'] // Exclude the position column from manager detection
+            );
 
-          // Step 2: Identify C-level executives (report to CEO)
-          const cLevelEmployees = mondayEmployees.filter(emp =>
-            emp !== ceo && emp.position && cLevelTitles.some(title =>
-              emp.position.toLowerCase().includes(title.toLowerCase())
-            )
-          );
 
-          cLevelEmployees.forEach(emp => {
-            // Check if managerName is specified in Monday.com
-            if (emp.managerName) {
-              const managerNameLower = emp.managerName.toLowerCase().trim();
-              
-              // Try multiple matching strategies
+            // If findColumn found the position column (which can happen due to keywords like "manager" in position titles), ignore it
+            if (managerColumn && managerColumn.id === 'text_mkz2n97z') {
+              console.log(`⚠️ Ignoring position column as manager for ${employee.name}`);
+              managerColumn = null;
+            }
+
+            // If not found, look for dropdown/people columns that contain employee names
+            if (!managerColumn) {
+              const employeeNames = mondayEmployees.map(emp => emp.name.toLowerCase().trim());
+
+              // Look for dropdown or people columns
+              const potentialManagerColumns = correspondingItem.column_values.filter(col =>
+                (col.type === 'dropdown' || col.type === 'people') &&
+                col.id !== 'text_mkz2n97z' // Exclude the position column
+              );
+
+              // console.log(`🔍 Looking for manager column among: ${potentialManagerColumns.map(col => col.id).join(', ')}`);
+
+              for (const col of potentialManagerColumns) {
+                const value = extractColumnValue(col);
+                if (value) {
+                  const valueLower = value.toLowerCase().trim();
+                  // console.log(`🔍 Checking column ${col.id} value: "${value}"`);
+
+                  // Check if this value matches any employee name
+                  const matchingEmployee = employeeNames.find(name =>
+                    name === valueLower ||
+                    name.includes(valueLower) ||
+                    valueLower.includes(name)
+                  );
+
+                  if (matchingEmployee) {
+                    managerColumn = col;
+                    console.log(`✅ Found manager column by employee name match: ${col.id} (value: "${value}")`);
+                    break;
+                  }
+                }
+              }
+            }
+
+            const managerValue = managerColumn ? extractColumnValue(managerColumn) : null;
+            console.log(`👔 Manager detection for ${employee.name}: managerColumn=${managerColumn?.id}, managerValue=${managerValue}`);
+            if (managerValue) {
+              const managerText = managerValue.trim();
+
+              // Enhanced manager finding logic
               let manager = null;
-              let matchingStrategy = '';
-              
-              // Strategy 1: Exact match (case-insensitive)
-              manager = mondayEmployees.find(m =>
-                m.name && m.name.toLowerCase().trim() === managerNameLower
-              );
+
+              // Function to normalize names for comparison
+              const normalizeName = (name) => {
+                return name.toLowerCase()
+                  .replace(/[^\w\s]/g, '') // Remove punctuation
+                  .replace(/\s+/g, ' ') // Normalize spaces
+                  .trim();
+              };
+
+              const normalizedManagerText = normalizeName(managerText);
+
+              // console.log(`🔍 Looking for manager "${managerText}" (${normalizedManagerText}) for employee ${employee.name}`);
+              // console.log(`📋 Available managers: ${mondayEmployees.map(emp => emp.name).join(', ')}`);
+
+              // Priority 1: Exact name match
+              manager = mondayEmployees.find(emp => emp.name === managerText);
+              // if (manager) console.log(`✅ Found exact match: ${manager.name}`);
+
+              // Priority 2: Case-insensitive exact match
+              if (!manager) {
+                manager = mondayEmployees.find(emp => emp.name.toLowerCase() === managerText.toLowerCase());
+                // if (manager) console.log(`✅ Found case-insensitive match: ${manager.name}`);
+              }
+
+              // Priority 3: Normalized name match
+              if (!manager) {
+                manager = mondayEmployees.find(emp => normalizeName(emp.name) === normalizedManagerText);
+                // if (manager) console.log(`✅ Found normalized match: ${manager.name}`);
+              }
+
+              // Priority 4: Partial name match (if manager text is part of employee name or vice versa)
+              if (!manager) {
+                manager = mondayEmployees.find(emp => {
+                  const empNormalized = normalizeName(emp.name);
+                  return empNormalized.includes(normalizedManagerText) ||
+                         normalizedManagerText.includes(empNormalized);
+                });
+              }
+
+              // Priority 5: First name match (if manager text contains first name)
+              if (!manager) {
+                const managerWords = normalizedManagerText.split(' ');
+                manager = mondayEmployees.find(emp => {
+                  const empWords = normalizeName(emp.name).split(' ');
+                  return managerWords.some(word => empWords.includes(word) && word.length > 2);
+                });
+              }
+
               if (manager) {
-                matchingStrategy = 'exact match';
-              }
-              
-              // Strategy 2: First name match - check if managerName is the first word of employee name
-              // This handles cases like "Elene" matching "Elene Smith"
-              if (!manager) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  const employeeNameParts = employeeNameLower.split(/\s+/);
-                  
-                  // Check if managerName matches the first name (first word) of employee
-                  if (employeeNameParts.length > 0) {
-                    const firstName = employeeNameParts[0];
-                    if (firstName === managerNameLower || firstName.startsWith(managerNameLower) || managerNameLower.startsWith(firstName)) {
-                      return true;
-                    }
-                  }
-                  return false;
-                });
-                if (manager) {
-                  matchingStrategy = 'first name match';
-                }
-              }
-              
-              // Strategy 3: Starts with match - check if employee name starts with managerName
-              if (!manager) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  return employeeNameLower.startsWith(managerNameLower + ' ') || 
-                         employeeNameLower === managerNameLower;
-                });
-                if (manager) {
-                  matchingStrategy = 'starts with match';
-                }
-              }
-              
-              // Strategy 4: Partial match - managerName contains employee name or vice versa (strict: require at least 3 chars)
-              if (!manager && managerNameLower.length >= 3) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  // Require at least 3 characters for partial match
-                  if (managerNameLower.length >= 3 && employeeNameLower.length >= 3) {
-                    return employeeNameLower.includes(managerNameLower) || 
-                           managerNameLower.includes(employeeNameLower);
-                  }
-                  return false;
-                });
-                if (manager) {
-                  matchingStrategy = 'partial match';
-                }
-              }
-              
-              // Strategy 5: Fuzzy match - find by first name or last name (word-by-word, strict: exact word match)
-              if (!manager) {
-                const managerNameParts = managerNameLower.split(/\s+/);
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  const employeeNameParts = employeeNameLower.split(/\s+/);
-                  
-                  // Only match if at least one word matches exactly
-                  return managerNameParts.some(part => 
-                    employeeNameParts.some(empPart => empPart === part)
-                  );
-                });
-                if (manager) {
-                  matchingStrategy = 'fuzzy match';
-                }
-              }
-              
-              if (manager) {
-                emp.managerId = manager.id;
+                employee.managerId = manager.id;
+                // console.log(`✅ Set manager for ${employee.name}: ${manager.name} (ID: ${manager.id})`);
               } else {
-                // Manager was specified but not found - leave as null
-                emp.managerId = null;
-              }
-            }
-            // If no managerName specified, leave as null (don't default to CEO)
-          });
-
-          // Step 3: Identify VPs/Directors (report to C-level or CEO)
-          const vpEmployees = mondayEmployees.filter(emp =>
-            emp !== ceo && !cLevelEmployees.includes(emp) && emp.position &&
-            vpTitles.some(title => emp.position.toLowerCase().includes(title.toLowerCase()))
-          );
-
-          vpEmployees.forEach(vp => {
-            let assignedManager = null;
-            
-            // First: Check if managerName is specified in Monday.com
-            if (vp.managerName) {
-              const managerNameLower = vp.managerName.toLowerCase().trim();
-              
-              // Try multiple matching strategies
-              let manager = null;
-              let matchingStrategy = '';
-              
-              // Strategy 1: Exact match (case-insensitive)
-              manager = mondayEmployees.find(m =>
-                m.name && m.name.toLowerCase().trim() === managerNameLower
-              );
-              if (manager) {
-                matchingStrategy = 'exact match';
-              }
-              
-              // Strategy 2: First name match - check if managerName is the first word of employee name
-              if (!manager) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  const employeeNameParts = employeeNameLower.split(/\s+/);
-                  
-                  if (employeeNameParts.length > 0) {
-                    const firstName = employeeNameParts[0];
-                    if (firstName === managerNameLower || firstName.startsWith(managerNameLower) || managerNameLower.startsWith(firstName)) {
-                      return true;
-                    }
-                  }
-                  return false;
-                });
-                if (manager) {
-                  matchingStrategy = 'first name match';
-                }
-              }
-              
-              // Strategy 3: Starts with match - check if employee name starts with managerName
-              if (!manager) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  return employeeNameLower.startsWith(managerNameLower + ' ') || 
-                         employeeNameLower === managerNameLower;
-                });
-                if (manager) {
-                  matchingStrategy = 'starts with match';
-                }
-              }
-              
-              // Strategy 4: Partial match - managerName contains employee name or vice versa (strict: require at least 3 chars)
-              if (!manager && managerNameLower.length >= 3) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  // Require at least 3 characters for partial match
-                  if (managerNameLower.length >= 3 && employeeNameLower.length >= 3) {
-                    return employeeNameLower.includes(managerNameLower) || 
-                           managerNameLower.includes(employeeNameLower);
-                  }
-                  return false;
-                });
-                if (manager) {
-                  matchingStrategy = 'partial match';
-                }
-              }
-              
-              // Strategy 5: Fuzzy match - find by first name or last name (word-by-word, strict: exact word match)
-              if (!manager) {
-                const managerNameParts = managerNameLower.split(/\s+/);
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  const employeeNameParts = employeeNameLower.split(/\s+/);
-                  
-                  // Only match if at least one word matches exactly
-                  return managerNameParts.some(part => 
-                    employeeNameParts.some(empPart => empPart === part)
-                  );
-                });
-                if (manager) {
-                  matchingStrategy = 'fuzzy match';
-                }
-              }
-              
-              if (manager) {
-                assignedManager = manager;
-              }
-              // If manager not found, leave assignedManager as null
-            }
-            
-            // Second: Only use department/position logic if managerName not specified
-            if (!assignedManager && !vp.managerName) {
-              const position = vp.position.toLowerCase();
-              if (position.includes('engineering') || position.includes('technology') || position.includes('tech')) {
-                assignedManager = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('cto')
-                ) || ceo;
-              } else if (position.includes('finance') || position.includes('financial')) {
-                assignedManager = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('cfo')
-                ) || ceo;
-              } else if (position.includes('marketing') || position.includes('sales') || position.includes('operation')) {
-                assignedManager = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('coo')
-                ) || ceo;
-              } else if (position.includes('hr') || position.includes('human')) {
-                assignedManager = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('coo')
-                ) || ceo;
-              } else {
-                assignedManager = ceo;
-              }
-            }
-
-            // Set managerId (can be null if managerName was specified but not found)
-            vp.managerId = assignedManager ? assignedManager.id : null;
-          });
-
-          // Step 4: Assign remaining employees based on department/position (like sample data)
-          const remainingEmployees = mondayEmployees.filter(emp =>
-            emp !== ceo && !cLevelEmployees.includes(emp) && !vpEmployees.includes(emp)
-          );
-
-          remainingEmployees.forEach(emp => {
-            let assignedManager = null;
-            let managerNameSpecified = false;
-
-            if (emp.managerName) {
-              managerNameSpecified = true;
-              const managerNameLower = emp.managerName.toLowerCase().trim();
-              
-              // Try multiple matching strategies
-                let manager = null;
-              let matchingStrategy = '';
-              
-              // Strategy 1: Exact match (case-insensitive)
-              manager = mondayEmployees.find(m =>
-                m.name && m.name.toLowerCase().trim() === managerNameLower
-              );
-              if (manager) {
-                matchingStrategy = 'exact match';
-              }
-              
-              // Strategy 2: First name match - check if managerName is the first word of employee name
-              // This handles cases like "Elene" matching "Elene Smith"
-              if (!manager) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  const employeeNameParts = employeeNameLower.split(/\s+/);
-                  
-                  // Check if managerName matches the first name (first word) of employee
-                  if (employeeNameParts.length > 0) {
-                    const firstName = employeeNameParts[0];
-                    if (firstName === managerNameLower || firstName.startsWith(managerNameLower) || managerNameLower.startsWith(firstName)) {
-                      return true;
-                    }
-                  }
-                  return false;
-                });
-                if (manager) {
-                  matchingStrategy = 'first name match';
-                }
-              }
-              
-              // Strategy 3: Starts with match - check if employee name starts with managerName
-              if (!manager) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  return employeeNameLower.startsWith(managerNameLower + ' ') || 
-                         employeeNameLower === managerNameLower;
-                });
-                if (manager) {
-                  matchingStrategy = 'starts with match';
-                }
-              }
-              
-              // Strategy 4: Partial match - managerName contains employee name or vice versa (strict: require at least 3 chars)
-              if (!manager && managerNameLower.length >= 3) {
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  // Require at least 3 characters for partial match
-                  if (managerNameLower.length >= 3 && employeeNameLower.length >= 3) {
-                    return employeeNameLower.includes(managerNameLower) || 
-                           managerNameLower.includes(employeeNameLower);
-                  }
-                  return false;
-                });
-                if (manager) {
-                  matchingStrategy = 'partial match';
-                }
-              }
-              
-              // Strategy 5: Fuzzy match - find by first name or last name (word-by-word, strict: exact word match)
-              if (!manager) {
-                const managerNameParts = managerNameLower.split(/\s+/);
-                manager = mondayEmployees.find(m => {
-                  if (!m.name) return false;
-                  const employeeNameLower = m.name.toLowerCase().trim();
-                  const employeeNameParts = employeeNameLower.split(/\s+/);
-                  
-                  // Only match if at least one word matches exactly
-                  return managerNameParts.some(part => 
-                    employeeNameParts.some(empPart => empPart === part)
-                  );
-                });
-                if (manager) {
-                  matchingStrategy = 'fuzzy match';
-                }
-              }
-              
-              if (manager) {
-                assignedManager = manager;
-              }
-            }
-
-            // Only use department/position logic if managerName was NOT specified in Monday.com
-            // If managerName was specified but not found, leave managerId as null
-            if (!assignedManager && !managerNameSpecified) {
-              const position = emp.position ? emp.position.toLowerCase() : '';
-              
-              // Determine department based on position (since Monday.com doesn't have department)
-              let department = 'Other';
-              if (position.includes('engineer') || position.includes('developer') || position.includes('software') || 
-                  position.includes('technical') || position.includes('programmer') || position.includes('architect') ||
-                  position.includes('qa') || position.includes('devops')) {
-                department = 'Technology';
-              } else if (position.includes('marketing') || position.includes('brand') || position.includes('content') ||
-                         position.includes('social media') || position.includes('seo') || position.includes('marketing specialist')) {
-                department = 'Marketing';
-                } else if (position.includes('sales') || position.includes('account executive') || 
-                         position.includes('customer success') || position.includes('business development') ||
-                         position.includes('representative')) {
-                department = 'Sales';
-                } else if (position.includes('hr') || position.includes('human resources') || 
-                         position.includes('recruiter') || position.includes('talent') || position.includes('coordinator')) {
-                department = 'Human Resources';
-                } else if (position.includes('finance') || position.includes('accountant') || 
-                           position.includes('financial') || position.includes('accounting')) {
-                department = 'Finance';
-              } else if (position.includes('operations') || position.includes('operation') ||
-                         position.includes('project manager') || position.includes('scrum master')) {
-                department = 'Operations';
-              }
-
-              // Assign manager based on department (like sample data logic)
-              if (department === 'Technology' || department === 'Engineering') {
-                // CTO or VP Engineering
-                const vpEngineering = vpEmployees.find(vp =>
-                  vp.position && vp.position.toLowerCase().includes('engineering')
-                );
-                const cto = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('cto')
-                );
-                assignedManager = vpEngineering || cto || ceo;
-              } else if (department === 'Marketing') {
-                // VP Marketing
-                const vpMarketing = vpEmployees.find(vp =>
-                  vp.position && vp.position.toLowerCase().includes('marketing')
-                );
-                assignedManager = vpMarketing || ceo;
-              } else if (department === 'Sales') {
-                // VP Sales
-                const vpSales = vpEmployees.find(vp =>
-                  vp.position && vp.position.toLowerCase().includes('sales')
-                );
-                assignedManager = vpSales || ceo;
-              } else if (department === 'Human Resources') {
-                // VP HR
-                const vpHr = vpEmployees.find(vp =>
-                  vp.position && vp.position.toLowerCase().includes('hr')
-                );
-                assignedManager = vpHr || ceo;
-              } else if (department === 'Finance') {
-                // CFO
-                const cfo = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('cfo')
-                );
-                assignedManager = cfo || ceo;
-              } else if (department === 'Operations') {
-                // COO
-                const coo = cLevelEmployees.find(c =>
-                  c.position && c.position.toLowerCase().includes('coo')
-                );
-                assignedManager = coo || ceo;
-              } else {
-                // For other departments, assign to existing managers (like sample data)
-                const existingManagers = mondayEmployees.filter(m => 
-                  m !== emp && (
-                    m.position && (
-                      m.position.toLowerCase().includes('vp') || 
-                      m.position.toLowerCase().includes('manager') || 
-                      m.position.toLowerCase().includes('lead')
-                    )
+                // console.log(`❌ No manager found for ${employee.name} with manager text: "${managerText}"`);
+                // If manager not found, try to find a reasonable default
+                // Look for employees with "CEO", "Director", "Manager" in their position
+                const possibleManagers = mondayEmployees.filter(emp =>
+                  emp.position && (
+                    emp.position.toLowerCase().includes('ceo') ||
+                    emp.position.toLowerCase().includes('director') ||
+                    emp.position.toLowerCase().includes('manager') ||
+                    emp.position.toLowerCase().includes('head')
                   )
                 );
-                if (existingManagers.length > 0) {
-                  // Randomly assign to one of the managers (like sample data)
-                  assignedManager = existingManagers[Math.floor(Math.random() * existingManagers.length)];
+
+                if (possibleManagers.length > 0) {
+                  employee.managerId = possibleManagers[0].id;
                 } else {
-                  assignedManager = ceo; // Default to CEO
+                  // Last resort: assign to first employee
+                  employee.managerId = mondayEmployees[0]?.id || null;
+                }
+              }
+            } else {
+              // No manager column data - use position-based hierarchy
+              // Employees with "CEO", "Director" etc. are at top level
+              const position = employee.position || '';
+              const isTopLevel = position.toLowerCase().includes('ceo') ||
+                               position.toLowerCase().includes('director') ||
+                               position.toLowerCase().includes('president') ||
+                               position.toLowerCase().includes('founder');
+
+              if (isTopLevel) {
+                employee.managerId = null; // Top level
+              } else {
+                // Find a suitable manager based on position hierarchy
+                const managerCandidates = mondayEmployees.filter(emp =>
+                  emp.position && (
+                    emp.position.toLowerCase().includes('manager') ||
+                    emp.position.toLowerCase().includes('director') ||
+                    emp.position.toLowerCase().includes('supervisor') ||
+                    emp.position.toLowerCase().includes('lead') ||
+                    emp.position.toLowerCase().includes('head')
+                  ) && emp.id !== employee.id
+                );
+
+                if (managerCandidates.length > 0) {
+                  employee.managerId = managerCandidates[0].id;
+                } else {
+                  employee.managerId = mondayEmployees[0]?.id || null;
                 }
               }
             }
+          }
 
-            // Set manager ID - if managerName was specified but not found, leave as null
-            if (assignedManager) {
-              emp.managerId = assignedManager.id;
-            } else {
-              emp.managerId = null;
+          // Log manager assignment result
+        });
+
+        // Validate and fix hierarchy
+        const validateHierarchy = (employees) => {
+          const employeeMap = new Map(employees.map(emp => [emp.id, emp]));
+          const processed = new Set();
+          const hierarchyErrors = [];
+
+          // Function to check for circular references
+          const checkCircular = (empId, visited = new Set()) => {
+            if (visited.has(empId)) {
+              hierarchyErrors.push(`Circular reference detected for employee ${empId}`);
+              return true;
             }
-          });
+            if (processed.has(empId)) return false;
 
-          // Step 5: Organize employees hierarchically (same as before)
-          const organizeHierarchically = (employees) => {
-            const employeeMap = new Map(employees.map(emp => [emp.id, emp]));
-            const organized = [];
-            const processed = new Set();
-
-            // Helper to get hierarchy level (distance from root)
-            const getLevel = (employeeId) => {
-              const emp = employeeMap.get(employeeId);
-              if (!emp) return 999; // Invalid employee
-              if (emp.managerId === null) return 0; // CEO (explicitly no manager)
-              if (emp.managerId === undefined) return 999; // Unresolved manager (put at end)
-              const manager = employeeMap.get(emp.managerId);
-              if (!manager) return 999; // Manager not found
-              return 1 + getLevel(emp.managerId);
-            };
-
-            // Sort by hierarchy level (CEO = 0, then 1, 2, etc.)
-            const sorted = [...employees].sort((a, b) => {
-              const levelA = getLevel(a.id);
-              const levelB = getLevel(b.id);
-              if (levelA !== levelB) {
-                return levelA - levelB;
-              }
-              // Same level: sort by name
-              return a.name.localeCompare(b.name);
-            });
-
-            return sorted;
+            visited.add(empId);
+            const emp = employeeMap.get(empId);
+            if (emp && emp.managerId) {
+              return checkCircular(emp.managerId, visited);
+            }
+            visited.delete(empId);
+            processed.add(empId);
+            return false;
           };
 
-          const organizedEmployees = organizeHierarchically(mondayEmployees);
-
-          // Remove managerName field (no longer needed)
-          organizedEmployees.forEach(emp => {
-            delete emp.managerName;
-          });
-
-          console.log(`✅ Monday.com-დან დატვირთული: ${organizedEmployees.length} თანამშრომელი`);
-          setEmployees(organizedEmployees);
-          localStorage.setItem('employees', JSON.stringify(organizedEmployees));
-          lastSyncTimeRef.current = Date.now(); // Update last sync time
-          
-          // Update last manager values after reload
-          const updatedManagerValues = {};
-          mondayEmployees.forEach(emp => {
-            if (emp.mondayItemId && emp.managerName) {
-              updatedManagerValues[emp.mondayItemId] = emp.managerName;
+          // Check each employee for circular references
+          employees.forEach(emp => {
+            if (!processed.has(emp.id)) {
+              checkCircular(emp.id);
             }
           });
-          lastManagerValuesRef.current = updatedManagerValues;
+
+          // Fix hierarchy issues
+          employees.forEach(emp => {
+            // Ensure no employee reports to themselves
+            if (emp.managerId === emp.id) {
+              emp.managerId = null;
+              hierarchyErrors.push(`Fixed self-reference for ${emp.name}`);
+            }
+
+            // Ensure manager exists
+            if (emp.managerId && !employeeMap.has(emp.managerId)) {
+              emp.managerId = null;
+              hierarchyErrors.push(`Fixed invalid manager reference for ${emp.name}`);
+            }
+          });
+
+          if (hierarchyErrors.length > 0) {
+            console.warn('⚠️ Hierarchy validation issues found:', hierarchyErrors);
+          }
+
+          return employees;
+        };
+
+        // Validate hierarchy and fix issues
+        const validatedEmployees = validateHierarchy(mondayEmployees);
+
+        // Only set employees if we have data from Monday.com
+        if (validatedEmployees.length > 0) {
+          console.log('✅ Monday.com-დან დამუშავებული თანამშრომლები:', validatedEmployees.map(emp => ({
+            id: emp.id,
+            name: emp.name,
+            position: emp.position,
+            department: emp.department,
+            managerId: emp.managerId,
+            email: emp.email,
+            phone: emp.phone
+          })));
+
+          // Debug column assignments for all employees
+          console.log('🔍 Column assignments summary:');
+          validatedEmployees.forEach(emp => {
+            const originalItem = items.find(item => parseInt(item.id) === emp.id);
+            if (originalItem) {
+              const positionCol = originalItem.column_values.find(col => col.id === 'text_mkz2n97z');
+              const managerCol = originalItem.column_values.find(col => col.id === 'dropdown_mkz225fw');
+              const deptCol = originalItem.column_values.find(col => col.id === 'dropdown_mkzdks5f');
+
+              console.log(`${emp.name}: Position="${emp.position}" (from ${positionCol ? positionCol.text : 'unknown'}), Department="${emp.department}" (from ${deptCol ? deptCol.text : 'unknown'}), ManagerId=${emp.managerId} (from ${managerCol ? managerCol.text : 'unknown'})`);
+            }
+          });
+
+          // Debug specific employees
+          const debugEmployees = validatedEmployees.filter(emp => ['Lazarei', 'Givi'].includes(emp.name));
+          if (debugEmployees.length > 0) {
+            console.log('🔍 Debug employees final data:', debugEmployees.map(emp => ({
+              name: emp.name,
+              position: emp.position,
+              department: emp.department,
+              managerId: emp.managerId
+            })));
+          }
+
+          // Log final processed employee data for verification
+          console.log('📋 Final processed employee data:');
+          validatedEmployees.forEach(emp => {
+            console.log(`  ${emp.name}: Position="${emp.position}", Department="${emp.department}", ManagerId=${emp.managerId}, Email="${emp.email}"`);
+          });
+
+          // Log hierarchy for debugging
+          console.log('🏗️ Hierarchy check:');
+          validatedEmployees.forEach(emp => {
+            const manager = validatedEmployees.find(m => m.id === emp.managerId);
+            console.log(`  ${emp.name} (ID: ${emp.id}) -> Manager: ${manager ? manager.name : 'None'} (ID: ${emp.managerId || 'null'})`);
+          });
+
+          setEmployees(validatedEmployees);
+          setMondayDataLoaded(true); // Trigger automatic organization after Monday.com data is loaded
+          localStorage.setItem('employees', JSON.stringify(validatedEmployees));
         }
       }
     } catch (error) {
-      console.error('❌ Error loading employees from Monday.com:', error.message || error);
+      console.error('❌ Error loading employees from Monday.com board:', error);
+      console.error('❌ Error type:', error.constructor.name);
+
+      // Log more detailed error info
+      if (error.message) {
+        console.error('❌ Error message:', error.message);
+      }
+      if (error.graphQLErrors) {
+        console.error('❌ GraphQL errors:', error.graphQLErrors);
+      }
+      if (error.networkError) {
+        console.error('❌ Network error:', error.networkError);
+      }
+
+      // Check if it's a permissions issue
+      if (error.message && error.message.includes('Insufficient permissions')) {
+        console.error('🚫 This looks like a permissions issue! Check your Monday.com app scopes.');
+      }
 
       // Fall back to sample data if Monday.com data loading fails
       const savedEmployees = localStorage.getItem('employees');
@@ -2962,836 +2314,161 @@ function App() {
     }
   };
 
-  // Polling mechanism to sync changes from Monday.com - temporarily disabled
-  // useEffect(() => {
-  //   if (!mondayBoardId || isSyncing) return;
-  //   // Sync functionality disabled due to code issues
-  // }, [mondayBoardId, isSyncing]);
-
-  const openSettingsModal = (section = 'field-management') => {
-    setActiveSettingsSection(section);
-    setShowSettingsModal(true);
-    setShowSettingsMenu(false);
-  };
-      const phoneColumnId = findColumnIdByTitle('phone') || findColumnIdByTitle('mobile');
-      const managerColumnId = findColumnIdByTitle('manager') || findColumnIdByTitle('reports_to');
-
-      // Get manager name if exists
-      const managerName = employee.managerId ? getEmployeeNameById(employee.managerId) : '';
-
-      // Build column values JSON
-      const columnValues = {};
-
-      // Position column - Monday.com API requires JSON format {"text": "value"} for all text columns
-      if (positionColumnId && employee.position) {
-        // Each value must be a JSON string
-        columnValues[positionColumnId] = JSON.stringify({ text: employee.position });
-      }
-
-      // Department column - handle dropdown or text type
-      if (departmentColumnId && employee.department) {
-        if (departmentColumnInfo && departmentColumnInfo.type === 'dropdown' && departmentColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = departmentColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-          
-          // Try to find exact match (case-insensitive)
-          for (const [id, text] of Object.entries(labels)) {
-            const textStr = String(text || '');
-            const departmentStr = String(employee.department || '');
-            
-            if (textStr === departmentStr || textStr.toLowerCase() === departmentStr.toLowerCase()) {
-              labelId = parseInt(id);
-              labelText = textStr;
-              break;
-            }
-          }
-          
-          if (labelId !== null) {
-            // Use label ID (preferred) - value must be JSON string
-            columnValues[departmentColumnId] = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback - value must be JSON string
-            columnValues[departmentColumnId] = JSON.stringify({ labels: [labelText] });
-          }
-          // If no match found, skip setting department column
-        } else {
-          // Text column - value must be JSON string
-          columnValues[departmentColumnId] = JSON.stringify({ text: employee.department });
-        }
-      }
-
-      // Email column
-      if (emailColumnId && employee.email) {
-        // Value must be JSON string
-        columnValues[emailColumnId] = JSON.stringify({ email: employee.email });
-      }
-
-      // Phone column
-      if (phoneColumnId && employee.phone) {
-        // Value must be JSON string
-        columnValues[phoneColumnId] = JSON.stringify({ phone: employee.phone, countryShortName: 'US' });
-      }
-
-      // Manager column - handle dropdown or text type
-      if (managerColumnId && managerName) {
-        if (managerColumnInfo && managerColumnInfo.type === 'dropdown' && managerColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = managerColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-          
-          // Try to find exact match (case-insensitive)
-          for (const [id, text] of Object.entries(labels)) {
-            // Ensure both text and managerName are strings
-            const textStr = String(text || '');
-            const managerNameStr = String(managerName || '');
-            
-            if (textStr === managerNameStr || textStr.toLowerCase() === managerNameStr.toLowerCase()) {
-              labelId = parseInt(id);
-              labelText = textStr;
-              break;
-            }
-          }
-          
-          if (labelId !== null) {
-            // Use label ID (preferred) - value must be JSON string
-            columnValues[managerColumnId] = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback - value must be JSON string
-            columnValues[managerColumnId] = JSON.stringify({ labels: [labelText] });
-          }
-          // If no match found, skip setting manager column
-        } else {
-          // Text column - value must be JSON string
-          columnValues[managerColumnId] = JSON.stringify({ text: managerName });
-        }
-      }
-
-      // Handle custom fields - iterate through all employee properties
-      const standardFields = ['id', 'mondayItemId', 'name', 'position', 'department', 'email', 'phone', 'managerId', 'managerName', 'image'];
-      
-      for (const [fieldName, fieldValue] of Object.entries(employee)) {
-        // Skip standard fields
-        if (standardFields.includes(fieldName)) continue;
-        
-        // Skip empty values
-        if (!fieldValue || (typeof fieldValue === 'string' && !fieldValue.trim())) continue;
-        
-        // Find Monday.com column ID for this field
-        let columnId = fieldNameToColumnId[fieldName];
-        
-        // If not found in mapping, try to find by title (case-insensitive, partial match)
-        if (!columnId) {
-          // Try exact match first (sanitized title)
-          let entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-            const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-            return sanitizedTitle === fieldName;
-          });
-          
-          // If not found, try case-insensitive partial match
-          if (!entry) {
-            entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-              const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-              const fieldNameLower = fieldName.toLowerCase();
-              return sanitizedTitle.includes(fieldNameLower) || fieldNameLower.includes(sanitizedTitle);
-            });
-          }
-          
-          // If still not found, try reverse lookup - check if fieldName matches any column title
-          if (!entry) {
-            entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-              const colTitleLower = (colTitle || '').toLowerCase().trim();
-              const fieldNameLower = fieldName.toLowerCase().replace(/_/g, ' ');
-              return colTitleLower === fieldNameLower || colTitleLower.includes(fieldNameLower) || fieldNameLower.includes(colTitleLower);
-            });
-          }
-          
-          if (entry) {
-            columnId = entry[0];
-            // Update mapping for future use
-            setFieldNameToColumnId(prev => ({ ...prev, [fieldName]: columnId }));
-          }
-        }
-        
-        if (!columnId) {
-          console.warn('⚠️ Custom field not found in Monday.com:', {
-            fieldName,
-            fieldValue,
-            availableFields: Object.keys(fieldNameToColumnId),
-            availableColumns: Object.keys(mondayColumnMapping).map(id => ({ id, title: mondayColumnMapping[id] }))
-          });
-          continue; // Skip if column not found
-        }
-        
-        // Get column type
-        const columnType = columnIdToType[columnId] || 'text';
-        
-        // Format value according to column type - each value must be JSON string
-        let formattedValue = null;
-        
-        if (columnType === 'email') {
-          formattedValue = JSON.stringify({ email: String(fieldValue) });
-        } else if (columnType === 'phone') {
-          formattedValue = JSON.stringify({ phone: String(fieldValue), countryShortName: 'US' });
-        } else if (columnType === 'dropdown' || columnType === 'status') {
-          // For dropdown/status, try to find matching label
-          // For now, use text format as fallback
-          formattedValue = JSON.stringify({ text: String(fieldValue) });
-        } else if (columnType === 'text') {
-          // For text columns, Monday.com API expects JSON format {"text": "value"}
-          formattedValue = JSON.stringify({ text: String(fieldValue) });
-        } else {
-          // Default: use JSON format for other types
-          formattedValue = JSON.stringify({ text: String(fieldValue) });
-        }
-        
-        if (formattedValue) {
-          columnValues[columnId] = formattedValue; // Value is JSON string
-        }
-      }
-
-      // Convert column values for Monday.com API
-      // Monday.com API expects column_values as a JSON object where each value is a JSON object
-      // Convert JSON strings to objects (like updateEmployeeInMonday does)
-      // columnValues object structure: { "columnId": "{\"text\":\"value\"}" } -> { "columnId": {text: "value"} }
-      let response;
-      
-      console.log('🔍 Column values prepared:', Object.keys(columnValues).length, 'columns');
-      
-      // Use Monday.com SDK's monday.api() method which handles token automatically
-      // Convert JSON strings to objects for JSON! type variable (like updateEmployeeInMonday)
-      if (Object.keys(columnValues).length > 0) {
-        // Convert columnValues object - parse each JSON string value to object
-        const columnValuesObj = {};
-        for (const [columnId, jsonString] of Object.entries(columnValues)) {
-          try {
-            columnValuesObj[columnId] = JSON.parse(jsonString);
-          } catch (e) {
-            console.warn('⚠️ Failed to parse JSON string for column:', columnId, jsonString);
-            // If parsing fails, try to use as-is
-            columnValuesObj[columnId] = jsonString;
-          }
-        }
-        
-        const mutation = `mutation ($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
-          create_item(
-            board_id: $boardId,
-            item_name: $itemName,
-            column_values: $columnValues
-          ) {
-            id
-            name
-          }
-        }`;
-        
-        const variables = {
-          boardId: String(mondayBoardId),
-          itemName: employee.name,
-          columnValues: columnValuesObj  // Pass raw object (like updateEmployeeInMonday)
-        };
-        
-        console.log('🔍 Create Employee Mutation:', mutation);
-        console.log('🔍 Column Values Object (with JSON strings):', columnValues);
-        console.log('🔍 Column Values Object (parsed to objects):', columnValuesObj);
-        console.log('🔍 Variables:', variables);
-        
-        // Use SDK's monday.api() which handles token automatically
-        console.log('🔍 Using Monday.com SDK to create employee...');
-        response = await monday.api(mutation, { variables });
-        console.log('🔍 SDK response received:', response);
-        
-        if (response.errors) {
-          console.error('❌ Monday.com API error:', response.errors);
-          const errorMessage = response.errors[0]?.message || 'GraphQL validation errors';
-          alert('Failed to create employee in Monday.com: ' + errorMessage);
-          throw new Error(errorMessage);
-        }
-      } else {
-        // Create item without column values if no columns found
-        const mutation = `mutation ($boardId: ID!, $itemName: String!) {
-          create_item(
-            board_id: $boardId,
-            item_name: $itemName
-          ) {
-            id
-            name
-          }
-        }`;
-        
-        const variables = {
-          boardId: String(mondayBoardId),
-          itemName: employee.name
-        };
-        
-        console.log('🔍 Creating item without column values, variables:', variables);
-        
-        // Use SDK's monday.api() which handles token automatically
-        console.log('🔍 Using Monday.com SDK to create employee (no column values)...');
-        response = await monday.api(mutation, { variables });
-        console.log('🔍 SDK response received:', response);
-        
-        if (response.errors) {
-          console.error('❌ Monday.com API error:', response.errors);
-          const errorMessage = response.errors[0]?.message || 'GraphQL validation errors';
-          alert('Failed to create employee in Monday.com: ' + errorMessage);
-          throw new Error(errorMessage);
-        }
-      }
-      
-      if (response && response.data && response.data.create_item) {
-        const itemId = response.data.create_item.id;
-        console.log('✅ createEmployeeInMonday completed successfully, returning item ID:', itemId);
-        return itemId;
-      }
-      
-      if (response && response.errors) {
-        console.error('❌ Monday.com API error:', response.errors);
-      }
-      
-      console.warn('⚠️ createEmployeeInMonday: No item ID in response');
+  // Add employee to Monday.com board
+  const addEmployeeToMonday = async (employeeData, boardIdToUse) => {
+    if (!boardIdToUse) {
+      console.warn('⚠️ No board ID available for adding employee to Monday.com');
       return null;
-    } catch (error) {
-      console.error('❌ Error creating employee in Monday.com:', error);
-      console.error('❌ Error stack:', error.stack);
-      // Don't show alert here - it's already shown in the fetch error handling above
-      // Return null to allow the employee to be added locally even if Monday.com sync fails
-      return null;
-    }
-  };
-
-  // Update employee in Monday.com
-  const updateEmployeeInMonday = async (employee) => {
-    if (!mondayBoardId || !employee.mondayItemId) {
-      return;
     }
 
     try {
-      // Find column IDs from mapping (don't use fallback strings - they won't work)
-      const positionColumnId = findColumnIdByTitle('position');
-      const departmentColumnId = findColumnIdByTitle('department');
-      const emailColumnId = findColumnIdByTitle('email');
-      const phoneColumnId = findColumnIdByTitle('phone') || findColumnIdByTitle('mobile');
-      const managerColumnId = findColumnIdByTitle('manager') || findColumnIdByTitle('reports_to');
-
-      // Debug: Log found column IDs
-      console.log('🔍 Found column IDs:', {
-        position: positionColumnId,
-        department: departmentColumnId,
-        email: emailColumnId,
-        phone: phoneColumnId,
-        manager: managerColumnId,
-        availableColumns: Object.entries(mondayColumnMapping).map(([id, title]) => ({ id, title }))
-      });
-
-      // Get manager name if exists
-      const managerName = employee.managerId ? getEmployeeNameById(employee.managerId) : '';
-
-      // Update each column value with unique aliases to avoid GraphQL conflicts
-      // Use GraphQL variables with JSON! type and raw JavaScript objects
-      // Monday.com SDK should serialize JSON! type variables correctly
-      const updates = [];
-      const variables = {};
-      let aliasCounter = 1;
-      let varCounter = 1;
-
-      // Position column - Monday.com API requires JSON format {"text": "value"} for all text columns
-      if (positionColumnId && employee.position) {
-        // Use GraphQL variable with JSON! type and raw JavaScript object
-        const positionValue = { text: employee.position };
-        const varName = `value${varCounter++}`;
-        variables[varName] = positionValue;
-        updates.push(`update${aliasCounter++}: change_column_value(
-          board_id: ${mondayBoardId},
-          item_id: ${employee.mondayItemId},
-          column_id: "${positionColumnId}",
-          value: $${varName}
-        ) { id }`);
-      }
-
-      // Department column - handle dropdown or text type
-      if (departmentColumnId && employee.department) {
-        console.log('🔍 Processing department:', {
-          departmentColumnId,
-          department: employee.department,
-          hasDepartmentColumnInfo: !!departmentColumnInfo,
-          departmentColumnInfoType: departmentColumnInfo?.type,
-          hasLabels: !!departmentColumnInfo?.labels
-        });
-        
-        let departmentValue = null;
-        
-        if (departmentColumnInfo && departmentColumnInfo.type === 'dropdown' && departmentColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = departmentColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-          
-          // Normalize department value (trim and lowercase, replace & with and)
-          const departmentStr = String(employee.department || '').trim().toLowerCase().replace(/&/g, 'and').replace(/\s+/g, ' ');
-          
-          // Try to find exact match (case-insensitive, trimmed)
-          for (const [id, text] of Object.entries(labels)) {
-            const textStr = String(text || '').trim().toLowerCase().replace(/&/g, 'and').replace(/\s+/g, ' ');
-            
-            // Exact match
-            if (textStr === departmentStr) {
-              labelId = parseInt(id);
-              labelText = String(text || '').trim();
-              break;
-            }
-            
-            // Partial match (department contains label or label contains department)
-            if (textStr.includes(departmentStr) || departmentStr.includes(textStr)) {
-              labelId = parseInt(id);
-              labelText = String(text || '').trim();
-              break;
-            }
-          }
-          
-          console.log('🔍 Department dropdown match result:', {
-            labelId,
-            labelText,
-            searchingFor: departmentStr,
-            labels: Object.entries(labels).map(([id, text]) => ({ 
-              id, 
-              text: String(text || '').trim(),
-              normalized: String(text || '').trim().toLowerCase().replace(/&/g, 'and').replace(/\s+/g, ' ')
-            }))
-          });
-          
-          if (labelId !== null) {
-            // Use label ID (preferred)
-            departmentValue = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback
-            departmentValue = JSON.stringify({ labels: [labelText] });
-          } else {
-            // No match found - use text format as fallback for dropdown
-            console.log('⚠️ Department dropdown match not found, using text format');
-            departmentValue = JSON.stringify({ text: employee.department });
-          }
-        } else {
-          // Text column - use text format
-          departmentValue = JSON.stringify({ text: employee.department });
-          console.log('🔍 Department text value:', departmentValue);
-        }
-        
-        if (departmentValue) {
-          // Parse JSON string to object for JSON! type variable
-          const departmentValueObj = JSON.parse(departmentValue);
-          const varName = `value${varCounter++}`;
-          variables[varName] = departmentValueObj;
-          updates.push(`update${aliasCounter++}: change_column_value(
-            board_id: ${mondayBoardId},
-            item_id: ${employee.mondayItemId},
-            column_id: "${departmentColumnId}",
-            value: $${varName}
-          ) { id }`);
-          console.log('✅ Department added to updates:', departmentValueObj);
-        } else {
-          console.log('⚠️ Department value is null, not added');
-        }
-      } else {
-        console.log('⚠️ Department not processed:', {
-          hasColumnId: !!departmentColumnId,
-          hasDepartment: !!employee.department,
-          departmentValue: employee.department
-        });
-      }
-
-      // Email column
-      if (emailColumnId && employee.email) {
-        // Use GraphQL variable with JSON! type and raw JavaScript object
-        const emailValue = { email: employee.email };
-        const varName = `value${varCounter++}`;
-        variables[varName] = emailValue;
-        updates.push(`update${aliasCounter++}: change_column_value(
-          board_id: ${mondayBoardId},
-          item_id: ${employee.mondayItemId},
-          column_id: "${emailColumnId}",
-          value: $${varName}
-        ) { id }`);
-      }
-
-      // Phone column
-      if (phoneColumnId && employee.phone) {
-        // Use GraphQL variable with JSON! type and raw JavaScript object
-        const phoneValue = { phone: employee.phone, countryShortName: 'US' };
-        const varName = `value${varCounter++}`;
-        variables[varName] = phoneValue;
-        updates.push(`update${aliasCounter++}: change_column_value(
-          board_id: ${mondayBoardId},
-          item_id: ${employee.mondayItemId},
-          column_id: "${phoneColumnId}",
-          value: $${varName}
-        ) { id }`);
-      }
-
-      // Manager column - handle dropdown or text type
-      if (managerColumnId) {
-        console.log('🔍 Processing manager:', {
-          managerColumnId,
-          managerName,
-          hasManagerId: !!employee.managerId,
-          hasManagerColumnInfo: !!managerColumnInfo,
-          managerColumnInfoType: managerColumnInfo?.type,
-          hasLabels: !!managerColumnInfo?.labels
-        });
-        
-        let managerValue;
-        
-        if (managerName && managerColumnInfo && managerColumnInfo.type === 'dropdown' && managerColumnInfo.labels) {
-          // Dropdown column - find matching label ID or text
-          const labels = managerColumnInfo.labels;
-          let labelId = null;
-          let labelText = null;
-          
-          // Try to find exact match (case-insensitive)
-          // Normalize manager name (trim and lowercase)
-          const managerNameStr = String(managerName || '').trim().toLowerCase();
-          
-          // Try to find exact match (case-insensitive, trimmed)
-          for (const [id, text] of Object.entries(labels)) {
-            const textStr = String(text || '').trim().toLowerCase();
-            
-            // Exact match
-            if (textStr === managerNameStr) {
-              labelId = parseInt(id);
-              labelText = String(text || '').trim();
-              break;
-            }
-            
-            // Partial match (manager name contains label or label contains manager name)
-            if (textStr.includes(managerNameStr) || managerNameStr.includes(textStr)) {
-              labelId = parseInt(id);
-              labelText = String(text || '').trim();
-              break;
-            }
-          }
-          
-          console.log('🔍 Manager dropdown match result:', {
-            labelId,
-            labelText,
-            searchingFor: managerNameStr,
-            labels: Object.entries(labels).map(([id, text]) => ({ 
-              id, 
-              text: String(text || '').trim(),
-              normalized: String(text || '').trim().toLowerCase()
-            }))
-          });
-          
-          if (labelId !== null) {
-            // Use label ID (preferred)
-            managerValue = JSON.stringify({ labels: [labelId] });
-          } else if (labelText) {
-            // Use label text as fallback
-            managerValue = JSON.stringify({ labels: [labelText] });
-          } else {
-            // No match found - use text format as fallback for dropdown
-            console.log('⚠️ Manager dropdown match not found, using text format');
-            managerValue = JSON.stringify({ text: managerName });
-          }
-        } else if (managerName) {
-          // Text column - use text format
-          managerValue = JSON.stringify({ text: managerName });
-          console.log('🔍 Manager text value:', managerValue);
-        } else {
-          // No manager name, clear the column
-          if (managerColumnInfo && managerColumnInfo.type === 'dropdown') {
-            managerValue = JSON.stringify({ labels: [] });
-          } else {
-            managerValue = JSON.stringify({ text: '' });
-          }
-          console.log('🔍 Manager cleared (empty value):', managerValue);
-        }
-        
-        console.log('🔍 Manager value result:', {
-          managerValue,
-          willBeAdded: !!managerValue
-        });
-        
-        if (managerValue) {
-          // Parse JSON string to object for JSON! type variable
-          const managerValueObj = JSON.parse(managerValue);
-          const varName = `value${varCounter++}`;
-          variables[varName] = managerValueObj;
-          updates.push(`update${aliasCounter++}: change_column_value(
-            board_id: ${mondayBoardId},
-            item_id: ${employee.mondayItemId},
-            column_id: "${managerColumnId}",
-            value: $${varName}
-          ) { id }`);
-          console.log('✅ Manager added to updates:', managerValueObj);
-        } else {
-          console.log('⚠️ Manager value is null, not added');
-        }
-      } else {
-        console.log('⚠️ Manager column ID not found');
-      }
-
-      // Handle custom fields - iterate through all employee properties
-      const standardFields = ['id', 'mondayItemId', 'name', 'position', 'department', 'email', 'phone', 'managerId', 'managerName', 'image'];
-      
-      for (const [fieldName, fieldValue] of Object.entries(employee)) {
-        // Skip standard fields
-        if (standardFields.includes(fieldName)) continue;
-        
-        // Skip empty values
-        if (!fieldValue || (typeof fieldValue === 'string' && !fieldValue.trim())) continue;
-        
-        // Find Monday.com column ID for this field
-        let columnId = fieldNameToColumnId[fieldName];
-        
-        // If not found in mapping, try to find by title (case-insensitive, partial match)
-        if (!columnId) {
-          // Try exact match first (sanitized title)
-          let entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-            const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-            return sanitizedTitle === fieldName;
-          });
-          
-          // If not found, try case-insensitive partial match
-          if (!entry) {
-            entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-              const sanitizedTitle = (colTitle || '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-              const fieldNameLower = fieldName.toLowerCase();
-              return sanitizedTitle.includes(fieldNameLower) || fieldNameLower.includes(sanitizedTitle);
-            });
-          }
-          
-          // If still not found, try reverse lookup - check if fieldName matches any column title
-          if (!entry) {
-            entry = Object.entries(mondayColumnMapping).find(([id, colTitle]) => {
-              const colTitleLower = (colTitle || '').toLowerCase().trim();
-              const fieldNameLower = fieldName.toLowerCase().replace(/_/g, ' ');
-              return colTitleLower === fieldNameLower || colTitleLower.includes(fieldNameLower) || fieldNameLower.includes(colTitleLower);
-            });
-          }
-          
-          if (entry) {
-            columnId = entry[0];
-            // Update mapping for future use
-            setFieldNameToColumnId(prev => ({ ...prev, [fieldName]: columnId }));
+      // First, try to create a simple item with just the name
+      console.log('📝 Step 1: Creating employee item with name only');
+      const createMutation = `
+        mutation {
+          create_item (
+            board_id: ${boardIdToUse},
+            item_name: "${employeeData.name.replace(/"/g, '\\"')}"
+          ) {
+            id
           }
         }
-        
-        if (!columnId) {
-          console.warn('⚠️ Custom field not found in Monday.com:', {
-            fieldName,
-            fieldValue,
-            availableFields: Object.keys(fieldNameToColumnId),
-            availableColumns: Object.keys(mondayColumnMapping).map(id => ({ id, title: mondayColumnMapping[id] }))
-          });
-          continue; // Skip if column not found
-        }
-        
-        // Get column type
-        const columnType = columnIdToType[columnId] || 'text';
-        
-        // Format value according to column type
-        let formattedValue = null;
-        
-        if (columnType === 'email') {
-          formattedValue = JSON.stringify({ email: String(fieldValue) });
-        } else if (columnType === 'phone') {
-          formattedValue = JSON.stringify({ phone: String(fieldValue), countryShortName: 'US' });
-        } else if (columnType === 'dropdown' || columnType === 'status') {
-          // For dropdown/status, try to find matching label
-          // For now, use text format as fallback
-          formattedValue = JSON.stringify({ text: String(fieldValue) });
-        } else if (columnType === 'text') {
-          // For text columns, Monday.com API expects JSON format {"text": "value"}
-          formattedValue = JSON.stringify({ text: String(fieldValue) });
-        } else {
-          // Default: use JSON format for other types
-          formattedValue = JSON.stringify({ text: String(fieldValue) });
-        }
-        
-        if (formattedValue) {
-          // Parse JSON string to object for JSON! type variable
-          const formattedValueObj = JSON.parse(formattedValue);
-          const varName = `value${varCounter++}`;
-          variables[varName] = formattedValueObj;
-          updates.push(`update${aliasCounter++}: change_column_value(
-            board_id: ${mondayBoardId},
-            item_id: ${employee.mondayItemId},
-            column_id: "${columnId}",
-            value: $${varName}
-          ) { id }`);
-        }
-      }
+      `;
 
-      // Update item name - use JSON.stringify to properly handle Georgian and other Unicode characters
-      // Note: change_simple_column_value requires board_id argument
-      const itemNameJson = JSON.stringify(employee.name);
-      updates.push(`update${aliasCounter++}: change_simple_column_value(
-        board_id: ${mondayBoardId},
-        item_id: ${employee.mondayItemId},
-        column_id: "name",
-        value: ${itemNameJson}
-      ) { id }`);
+      console.log('🔧 Create mutation:', createMutation);
+      const createResponse = await monday.api(createMutation);
+      console.log('📡 Create response:', createResponse);
 
-      if (updates.length > 0) {
-        // Build mutation with GraphQL variables for JSON! type
-        // Build variable definitions for JSON! type
-        const variableDefinitions = Object.keys(variables).map(varName => `$${varName}: JSON!`).join(', ');
-        const mutation = `mutation (${variableDefinitions}) {
-          ${updates.join('\n')}
-        }`;
-
-        // Debug: Log the mutation and variables to see what's being sent
-        console.log('🔍 GraphQL Mutation:', mutation);
-        console.log('🔍 GraphQL Variables:', variables);
-        
-        const response = await monday.api(mutation, { variables });
-        
-        if (response.errors) {
-          console.error('❌ Monday.com API error:', response.errors);
-        } else {
-          console.log('✅ Employee updated successfully in Monday.com');
-        }
-      }
-    } catch (error) {
-      console.error('❌ Error updating employee in Monday.com:', error.message);
-    }
-  };
-
-  // Upload image to Monday.com
-  const uploadImageToMonday = async (employee, file) => {
-    if (!employee || !employee.mondayItemId || !imageColumnId || !file) {
-      console.error('❌ Missing required data for image upload:', { employee, imageColumnId, file });
-      setIsUploadingImage(false);
-      return null;
-    }
-
-    setIsUploadingImage(true);
-
-    try {
-      // Get Monday.com API token
-      const token = await monday.get('token');
-      if (!token) {
-        throw new Error('Monday.com token not available');
-      }
-
-      // Monday.com API requires multipart/form-data with specific format:
-      // - query: GraphQL mutation string
-      // - map: JSON object mapping form field to GraphQL variable
-      // - image: the actual file
-      const mutation = `mutation add_file($file: File!) {
-        add_file_to_column(
-          item_id: ${employee.mondayItemId},
-          column_id: "${imageColumnId}",
-          file: $file
-        ) {
-          id
-        }
-      }`;
-
-      // Create FormData for multipart/form-data request
-      const formData = new FormData();
-      formData.append('query', mutation);
-      formData.append('map', JSON.stringify({ image: 'variables.file' }));
-      formData.append('image', file, file.name);
-
-      console.log('🔍 Uploading image to Monday.com:', {
-        itemId: employee.mondayItemId,
-        columnId: imageColumnId,
-        fileName: file.name,
-        fileSize: file.size
-      });
-
-      // Add timeout to prevent hanging on "Uploading..."
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('Upload timeout after 30 seconds'));
-        }, 30000);
-      });
-
-      let response;
-      try {
-        const fetchPromise = fetch('https://api.monday.com/v2/file', {
-          method: 'POST',
-          headers: {
-            'Authorization': token
-          },
-          body: formData
-        });
-
-        response = await Promise.race([fetchPromise, timeoutPromise]);
-      } catch (fetchError) {
-        // Catch CORS and network errors
-        console.error('❌ Fetch error:', fetchError);
-        if (fetchError.message.includes('timeout')) {
-          throw new Error('Upload timeout after 30 seconds. This might be due to CORS restrictions.');
-        } else if (fetchError.message.includes('Failed to fetch') || fetchError.name === 'TypeError') {
-          throw new Error('CORS error: Cannot upload files directly from browser. Please upload images directly in Monday.com board.');
-        }
-        throw fetchError;
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ HTTP error response:', errorText);
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.errors) {
-        console.error('❌ Monday.com API error during image upload:', result.errors);
-        alert('Failed to upload image: ' + (result.errors[0]?.message || 'Unknown error'));
-        setIsUploadingImage(false);
+      if (!createResponse?.data?.create_item?.id) {
+        console.error('❌ Failed to create employee item in Monday.com');
+        console.error('❌ Create response:', createResponse);
         return null;
       }
 
-      console.log('✅ Image uploaded successfully:', result);
-      
-      // Reload employees to get updated image URL
-      if (mondayBoardId) {
-        await loadEmployeesFromBoard(mondayBoardId);
+      const itemId = createResponse.data.create_item.id;
+      console.log('✅ Employee item created with ID:', itemId);
+
+      // Now try to update with column data if we have mappings
+      console.log('📝 Step 2: Checking for column mappings and data to update');
+      console.log('🎯 Current column mappings:', columnMappings);
+
+      // Prepare column values using detected column mappings
+      const columnValues = {};
+
+      // Position column
+      if (employeeData.position && columnMappings.position) {
+        columnValues[columnMappings.position] = employeeData.position;
       }
-      
-      setIsUploadingImage(false);
-      return result.data?.add_file_to_column?.id || null;
+
+      // Department column
+      if (employeeData.department && columnMappings.department) {
+        columnValues[columnMappings.department] = employeeData.department;
+      }
+
+      // Email column
+      if (employeeData.email && columnMappings.email) {
+        columnValues[columnMappings.email] = employeeData.email;
+      }
+
+      // Phone column
+      if (employeeData.phone && columnMappings.phone) {
+        columnValues[columnMappings.phone] = employeeData.phone;
+      }
+
+      // Manager column - try to find manager by name
+      if (employeeData.managerId && columnMappings.manager) {
+        const manager = employees.find(emp => emp.id === employeeData.managerId);
+        if (manager) {
+          columnValues[columnMappings.manager] = manager.name;
+        }
+      }
+
+      console.log('📋 Column values to update:', columnValues);
+      console.log('🔍 Available column mappings:', columnMappings);
+
+      // Update columns with actual values
+      if (Object.keys(columnValues).length > 0) {
+        console.log('🔄 Updating columns with values...');
+
+        // Update each column individually
+        for (const [columnId, value] of Object.entries(columnValues)) {
+          try {
+            console.log(`🔄 Updating column ${columnId} with value: "${value}"`);
+
+            // For Monday.com API, text and email columns expect raw string values
+            console.log(`📝 Raw value for ${columnId}: "${value}"`);
+
+            const updateMutation = `
+              mutation {
+                change_column_value (
+                  item_id: ${itemId},
+                  board_id: ${boardIdToUse},
+                  column_id: "${columnId}",
+                  value: "${value.replace(/"/g, '\\"')}"
+                ) {
+                  id
+                }
+              }
+            `;
+
+            console.log('🔧 Update mutation:', updateMutation);
+            const updateResponse = await monday.api(updateMutation);
+            console.log('📡 Update response for column', columnId, ':', updateResponse);
+
+            if (!updateResponse?.data?.change_column_value?.id) {
+              console.warn(`⚠️ Failed to update column ${columnId}`);
+            } else {
+              console.log(`✅ Successfully updated column ${columnId}`);
+            }
+          } catch (columnError) {
+            console.warn(`⚠️ Error updating column ${columnId}:`, columnError);
+          }
+        }
+      } else {
+        console.log('⚠️ No column values to update - check if column mappings are working');
+      }
+
+      console.log('✅ Employee successfully added to Monday.com with ID:', itemId);
+      return parseInt(itemId);
+
     } catch (error) {
-      console.error('❌ Error uploading image to Monday.com:', error);
-      
-      // Better error messages
-      let errorMessage = error.message;
-      if (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.name === 'TypeError') {
-        errorMessage = 'Image upload failed due to CORS restrictions. Monday.com SDK does not support direct file uploads from browser. Please upload images directly in Monday.com board.';
-      } else if (error.message.includes('timeout')) {
-        errorMessage = 'Upload timeout. This might be due to CORS restrictions or network issues.';
-      }
-      
-      alert(errorMessage);
-      setIsUploadingImage(false);
+      console.error('❌ Error adding employee to Monday.com:', error);
+      console.error('❌ Error details:', error.message);
       return null;
     }
   };
 
-  // Delete employee from Monday.com
-  const deleteEmployeeInMonday = async (mondayItemId) => {
-    if (!mondayBoardId || !mondayItemId) {
-      return;
+  // Delete employee from Monday.com board
+  const deleteEmployeeFromMonday = async (employeeId, boardIdToUse) => {
+    if (!boardIdToUse) {
+      console.warn('⚠️ No board ID available for deleting employee from Monday.com');
+      return false;
     }
 
     try {
-      const mutation = `mutation {
-        delete_item(item_id: ${mondayItemId}) {
-          id
+      // Create mutation to delete item from board
+      const mutation = `
+        mutation {
+          delete_item (item_id: ${employeeId}) {
+            id
+          }
         }
-      }`;
+      `;
+
+      console.log('🗑️ Deleting employee from Monday.com:', employeeId);
 
       const response = await monday.api(mutation);
-      
-      if (response.errors) {
-        console.error('❌ Monday.com API error:', response.errors);
+
+      if (response?.data?.delete_item?.id) {
+        console.log('✅ Employee deleted from Monday.com:', response.data.delete_item.id);
+        return true;
+      } else {
+        console.error('❌ Failed to delete employee from Monday.com:', response);
+        return false;
       }
     } catch (error) {
-      console.error('❌ Error deleting employee from Monday.com:', error.message);
+      console.error('❌ Error deleting employee from Monday.com:', error);
+      return false;
     }
   };
 
@@ -3945,71 +2622,223 @@ function App() {
   };
 
   const addEmployee = async (employeeData) => {
-    console.log('🔍 Add Employee called with data:', employeeData);
-    
+    // Create employee locally first
+    const tempId = Date.now();
     const newEmployee = {
       ...employeeData,
-      id: Date.now(),
+      id: tempId,
       managerId: employeeData.managerId ? parseInt(employeeData.managerId) : null
     };
 
-    console.log('🔍 New employee object:', newEmployee);
-
-    console.log('🔍 Adding employee to local state');
+    // Add to local state immediately for UI responsiveness
     setEmployees([...employees, newEmployee]);
+    setShowForm(false);
+    setSelectedEmployee(null);
 
-    // Sync to Monday.com if board is configured
-    if (mondayBoardId) {
+    // If connected to Monday.com, sync the employee
+    if (!isStandaloneMode && boardId) {
       try {
-        console.log('🔄 Syncing new employee to Monday.com...');
-        const mondayItemId = await createEmployeeInMonday(newEmployee);
-        if (mondayItemId) {
-          // Update the employee with the Monday.com item ID
+        console.log('🔄 Syncing employee to Monday.com:', employeeData.name);
+        const mondayId = await addEmployeeToMonday(employeeData, boardId);
+
+        if (mondayId) {
+          // Update the employee with the real Monday.com ID
           setEmployees(prevEmployees =>
             prevEmployees.map(emp =>
-              emp.id === newEmployee.id
-                ? { ...emp, mondayItemId }
+              emp.id === tempId
+                ? { ...emp, id: mondayId }
                 : emp
             )
           );
+
+          // Save updated employees to localStorage
+          setTimeout(() => {
+            setEmployees(currentEmployees => {
+              const updatedEmployees = currentEmployees.map(emp =>
+                emp.id === tempId
+                  ? { ...emp, id: mondayId }
+                  : emp
+              );
+              localStorage.setItem('employees', JSON.stringify(updatedEmployees));
+              return updatedEmployees;
+            });
+          }, 100);
+        } else {
+          console.warn('⚠️ Employee added locally but failed to sync to Monday.com');
         }
       } catch (error) {
-        console.error('❌ Failed to sync employee to Monday.com:', error);
-        // Continue with local addition even if Monday.com sync fails
+        console.error('❌ Error syncing employee to Monday.com:', error);
       }
+    } else {
+      // Save to localStorage if not syncing to Monday.com
+      localStorage.setItem('employees', JSON.stringify([...employees, newEmployee]));
     }
-
-    console.log('🔍 Closing form');
-    setShowForm(false);
-    setSelectedEmployee(null);
-    console.log('✅ Add Employee completed');
   };
 
   const updateEmployee = async (employeeData) => {
+    // Find the original employee to compare changes
+    const originalEmployee = employees.find(emp => emp.id === selectedEmployee.id);
+
+    // Update locally first
     const updatedEmployee = {
       ...employeeData,
       id: selectedEmployee.id,
       managerId: employeeData.managerId ? parseInt(employeeData.managerId) : null
     };
 
-    const updatedEmployees = employees.map(emp => 
+    const updatedEmployees = employees.map(emp =>
       emp.id === selectedEmployee.id ? updatedEmployee : emp
     );
     setEmployees(updatedEmployees);
+    setShowForm(false);
+    setSelectedEmployee(null);
 
-    // Sync to Monday.com if board is configured and employee has Monday.com item ID
-    if (mondayBoardId && updatedEmployee.mondayItemId) {
+    // Sync changes to Monday.com if connected
+    if (!isStandaloneMode && boardId && originalEmployee) {
       try {
-        console.log('🔄 Syncing updated employee to Monday.com...');
-        await updateEmployeeInMonday(updatedEmployee);
+        console.log('🔄 Syncing employee update to Monday.com:', updatedEmployee.name);
+        console.log('👤 Original employee:', {
+          name: originalEmployee.name,
+          position: originalEmployee.position,
+          department: originalEmployee.department,
+          email: originalEmployee.email,
+          phone: originalEmployee.phone,
+          managerId: originalEmployee.managerId
+        });
+        console.log('✨ Updated employee:', {
+          name: updatedEmployee.name,
+          position: updatedEmployee.position,
+          department: updatedEmployee.department,
+          email: updatedEmployee.email,
+          phone: updatedEmployee.phone,
+          managerId: updatedEmployee.managerId
+        });
+        console.log('🗺️ Column mappings:', columnMappings);
+
+        // Identify changed fields
+        const changedFields = {};
+
+        if (updatedEmployee.name !== originalEmployee.name) {
+          console.log('📝 Name changed from:', originalEmployee.name, 'to:', updatedEmployee.name);
+        }
+
+        console.log('🔍 Comparing position:', originalEmployee.position, 'vs', updatedEmployee.position, '- equal?', updatedEmployee.position === originalEmployee.position);
+        if (updatedEmployee.position !== originalEmployee.position) {
+          console.log('📝 Position changed from:', originalEmployee.position, 'to:', updatedEmployee.position);
+          if (columnMappings.position) {
+            changedFields[columnMappings.position] = updatedEmployee.position;
+            console.log('✅ Will update position column:', columnMappings.position);
+          } else {
+            console.log('❌ No position column mapping found');
+          }
+        }
+
+        console.log('🔍 Comparing department:', originalEmployee.department, 'vs', updatedEmployee.department, '- equal?', updatedEmployee.department === originalEmployee.department);
+        if (updatedEmployee.department !== originalEmployee.department) {
+          console.log('📝 Department changed from:', originalEmployee.department, 'to:', updatedEmployee.department);
+          if (columnMappings.department) {
+            changedFields[columnMappings.department] = updatedEmployee.department;
+            console.log('✅ Will update department column:', columnMappings.department);
+          } else {
+            console.log('❌ No department column mapping found');
+          }
+        }
+
+        console.log('🔍 Comparing email:', originalEmployee.email, 'vs', updatedEmployee.email, '- equal?', updatedEmployee.email === originalEmployee.email);
+        if (updatedEmployee.email !== originalEmployee.email) {
+          console.log('📝 Email changed from:', originalEmployee.email, 'to:', updatedEmployee.email);
+          if (columnMappings.email) {
+            changedFields[columnMappings.email] = updatedEmployee.email;
+            console.log('✅ Will update email column:', columnMappings.email);
+          } else {
+            console.log('❌ No email column mapping found');
+          }
+        }
+
+        console.log('🔍 Comparing phone:', originalEmployee.phone, 'vs', updatedEmployee.phone, '- equal?', updatedEmployee.phone === originalEmployee.phone);
+        if (updatedEmployee.phone !== originalEmployee.phone) {
+          console.log('📝 Phone changed from:', originalEmployee.phone, 'to:', updatedEmployee.phone);
+          if (columnMappings.phone) {
+            changedFields[columnMappings.phone] = updatedEmployee.phone;
+            console.log('✅ Will update phone column:', columnMappings.phone);
+          } else {
+            console.log('❌ No phone column mapping found');
+          }
+        }
+
+        // Check if manager changed
+        console.log('🔍 Comparing managerId:', originalEmployee.managerId, 'vs', updatedEmployee.managerId, '- equal?', updatedEmployee.managerId === originalEmployee.managerId);
+        if (updatedEmployee.managerId !== originalEmployee.managerId) {
+          const newManager = employees.find(emp => emp.id === updatedEmployee.managerId);
+          const oldManager = employees.find(emp => emp.id === originalEmployee.managerId);
+
+          console.log('📝 Manager changed from:', oldManager?.name || 'None', 'to:', newManager?.name || 'None');
+
+          if (newManager?.name !== oldManager?.name && columnMappings.manager) {
+            changedFields[columnMappings.manager] = newManager?.name || '';
+            console.log('✅ Will update manager column:', columnMappings.manager);
+          } else if (columnMappings.manager) {
+            console.log('❌ Manager names are the same or no manager column mapping');
+          } else {
+            console.log('❌ No manager column mapping found');
+          }
+        }
+
+        // Update changed fields in Monday.com
+        if (Object.keys(changedFields).length > 0) {
+          console.log('📋 Fields to update in Monday.com:', changedFields);
+          console.log('🔢 Number of fields to update:', Object.keys(changedFields).length);
+
+          for (const [columnId, value] of Object.entries(changedFields)) {
+            try {
+              console.log(`🔄 Updating column ${columnId} with value: "${value}" (type: ${typeof value})`);
+
+              const updateMutation = `
+                mutation {
+                  change_column_value (
+                    item_id: ${selectedEmployee.id},
+                    board_id: ${boardId},
+                    column_id: "${columnId}",
+                    value: "${value.replace(/"/g, '\\"')}"
+                  ) {
+                    id
+                  }
+                }
+              `;
+
+              console.log('🔧 Mutation being sent:', updateMutation.trim());
+
+              const updateResponse = await monday.api(updateMutation);
+              console.log('📡 Update response for column', columnId, ':', updateResponse);
+
+              if (!updateResponse?.data?.change_column_value?.id) {
+                console.warn(`⚠️ Failed to update column ${columnId} in Monday.com`);
+                console.warn('❌ Response details:', updateResponse);
+              } else {
+                console.log(`✅ Successfully updated column ${columnId} in Monday.com`);
+              }
+            } catch (columnError) {
+              console.warn(`⚠️ Error updating column ${columnId}:`, columnError);
+              console.warn('❌ Error details:', columnError.message);
+            }
+          }
+        }
+
+        // Note: Item names in Monday.com cannot be updated after creation
+        // The item_name parameter is only used during creation
+        if (updatedEmployee.name !== originalEmployee.name) {
+          console.log('ℹ️ Name changed but cannot be updated in Monday.com (names are set during creation only)');
+        }
+
+        console.log('✅ Employee update synced to Monday.com');
+
       } catch (error) {
-        console.error('❌ Failed to sync employee update to Monday.com:', error);
-        // Continue with local update even if Monday.com sync fails
+        console.error('❌ Error syncing employee update to Monday.com:', error);
       }
     }
 
-    setShowForm(false);
-    setSelectedEmployee(null);
+    // Save to localStorage
+    localStorage.setItem('employees', JSON.stringify(updatedEmployees));
   };
 
   const confirmDeleteEmployee = (employeeId) => {
@@ -4021,7 +2850,7 @@ function App() {
   const deleteEmployee = async (employeeId) => {
     // Check if employee has subordinates
     const hasSubordinates = employees.some(emp => emp.managerId === employeeId);
-    
+
     if (hasSubordinates) {
       const employee = employees.find(emp => emp.id === employeeId);
       const subordinates = employees.filter(emp => emp.managerId === employeeId);
@@ -4032,25 +2861,30 @@ function App() {
       return;
     }
 
-    const employeeToDelete = employees.find(emp => emp.id === employeeId);
-
+    // Remove from local state immediately for UI responsiveness
     const updatedEmployees = employees.filter(emp => emp.id !== employeeId);
     setEmployees(updatedEmployees);
-
-    // Sync deletion to Monday.com if board is configured and employee has Monday.com item ID
-    if (mondayBoardId && employeeToDelete?.mondayItemId) {
-      try {
-        console.log('🔄 Syncing employee deletion to Monday.com...');
-        await deleteEmployeeInMonday(employeeToDelete.mondayItemId);
-      } catch (error) {
-        console.error('❌ Failed to sync employee deletion to Monday.com:', error);
-        // Continue with local deletion even if Monday.com sync fails
-      }
-    }
-
     setSelectedEmployee(null);
     setShowDeleteConfirm(false);
     setEmployeeToDelete(null);
+
+    // If connected to Monday.com, sync the deletion
+    if (!isStandaloneMode && boardId) {
+      try {
+        console.log('🔄 Syncing employee deletion to Monday.com:', employeeId);
+        const success = await deleteEmployeeFromMonday(employeeId, boardId);
+
+        if (!success) {
+          console.warn('⚠️ Employee deleted locally but failed to sync deletion to Monday.com');
+          // Could potentially restore the employee locally here if needed
+        }
+      } catch (error) {
+        console.error('❌ Error syncing employee deletion to Monday.com:', error);
+      }
+    }
+
+    // Save updated employees to localStorage
+    localStorage.setItem('employees', JSON.stringify(updatedEmployees));
   };
 
   const closeSubordinatesError = () => {
@@ -4067,7 +2901,6 @@ function App() {
     setSelectedEmployee(employee);
     setShowForm(true);
   };
-  */
 
   const handleAddNew = () => {
     setSelectedEmployee(null);
@@ -4215,7 +3048,6 @@ function App() {
 
     const sampleEmployees = generateSampleEmployees();
     setEmployees(sampleEmployees);
-    localStorage.setItem('employees', JSON.stringify(sampleEmployees));
     setSelectedEmployee(null);
   };
 
@@ -4223,7 +3055,7 @@ function App() {
     <div className="App">
       <header className="app-header">
         <div className="header-content">
-          <h1>Organizational Chart</h1>
+          <h1>Organizational Chart {isStandaloneMode && <span className="standalone-badge">Standalone Mode</span>}</h1>
           <div className="header-actions">
             <div className="dropdown-container view-dropdown-container" ref={viewDropdownRef} onMouseLeave={handleViewDropdownContainerMouseLeave}>
               <button 
@@ -4374,6 +3206,8 @@ function App() {
               onEditEmployee={handleEditEmployee}
               onDeleteEmployee={confirmDeleteEmployee}
               onViewEmployee={openViewPopup}
+              isStandaloneMode={isStandaloneMode}
+              mondayDataLoaded={mondayDataLoaded}
               designSettings={designSettings}
             />
           </div>
@@ -4395,8 +3229,6 @@ function App() {
           onTabChange={handleSettingsTabChange}
           designSettings={designSettings}
           onDesignSettingsChange={setDesignSettings}
-          mondayBoardId={mondayBoardId}
-          monday={monday}
         />
 
         {/* Employee View Popup */}
