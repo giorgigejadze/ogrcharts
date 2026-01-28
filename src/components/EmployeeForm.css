@@ -501,9 +501,8 @@
 
 /* Image Upload Section */
 .image-upload-section {
-  margin-top: 2rem;
-  padding-top: 2rem;
-  border-top: 2px solid var(--border-color);
+  margin-top: 0;
+  padding-top: 0;
 }
 
 .image-upload-container {

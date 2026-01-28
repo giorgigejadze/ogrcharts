@@ -388,6 +388,10 @@ const OrgChart = ({
   onViewEmployee,
   isStandaloneMode = false,
   mondayDataLoaded = false,
+  isOrganizeDisabled = false,
+  setIsOrganizeDisabled,
+  employeeJustEdited = false,
+  setEmployeeJustEdited,
   designSettings = {
     cardStyle: 'rounded',
     avatarSize: 'medium',
@@ -415,24 +419,171 @@ const OrgChart = ({
     }
   };
 
+  // Helper function to calculate organized positions (same logic as handleOrganize)
+  const calculateOrganizedPositions = (employees) => {
+    if (!employees || employees.length === 0) return new Map();
+
+    const employeeMap = new Map(employees.map(emp => [emp.id, emp]));
+    const rootEmployees = employees.filter(emp => !emp.managerId);
+    const positionedNodes = new Map();
+    const levelWidth = 550;
+    const processedNodes = new Set();
+    const parentPositions = new Map();
+
+    // Pre-calculate subtree sizes
+    const getSubtreeWidth = (employeeId) => {
+      const employee = employeeMap.get(employeeId);
+      if (!employee) return 1;
+      const subordinates = employees.filter(emp => emp.managerId === employeeId);
+      if (subordinates.length === 0) return 1;
+      const totalChildWidth = subordinates.reduce((sum, sub) => sum + getSubtreeWidth(sub.id), 0);
+      return Math.max(totalChildWidth, subordinates.length);
+    };
+
+    // Calculate hierarchy positions
+    const calculateHierarchy = (employeeId, level = 0, startX = 0, availableWidth = 0) => {
+      const employee = employeeMap.get(employeeId);
+      if (!employee) return null;
+
+      const subordinates = employees.filter(emp => emp.managerId === employeeId);
+      const nodeWidth = 320;
+      const levelSpacing = 380;
+      const topOffset = 100;
+
+      let x, y;
+      if (level === 0) {
+        const totalWidth = Math.max(availableWidth, rootEmployees.length * nodeWidth * 2);
+        const spacing = totalWidth / (rootEmployees.length + 1);
+        const rootIndex = rootEmployees.findIndex(emp => emp.id === employeeId);
+        x = startX + spacing * (rootIndex + 1);
+        y = topOffset;
+      } else {
+        x = startX + availableWidth / 2;
+        y = level * levelSpacing + topOffset;
+      }
+
+      return { x, y, level, subordinates };
+    };
+
+    // Process nodes with breadth-first approach
+    let currentLevel = 0;
+    let currentLevelNodes = rootEmployees.map(emp => emp.id);
+
+    while (currentLevelNodes.length > 0) {
+      const nextLevelNodes = [];
+
+      if (currentLevel > 0) {
+        currentLevelNodes.sort((a, b) => {
+          const empA = employeeMap.get(a);
+          const empB = employeeMap.get(b);
+          if (!empA?.managerId || !empB?.managerId) return 0;
+          const managerA = parentPositions.get(empA.managerId);
+          const managerB = parentPositions.get(empB.managerId);
+          if (!managerA || !managerB) return 0;
+          return managerA.x - managerB.x;
+        });
+      }
+
+      const levelStartX = -((currentLevelNodes.length - 1) * levelWidth) / 2;
+
+      currentLevelNodes.forEach((employeeId, index) => {
+        if (processedNodes.has(employeeId)) return;
+
+        const availableWidth = levelWidth;
+        const startX = levelStartX + index * levelWidth;
+        const hierarchy = calculateHierarchy(employeeId, currentLevel, startX, availableWidth);
+
+        if (hierarchy) {
+          positionedNodes.set(employeeId, hierarchy);
+          processedNodes.add(employeeId);
+          parentPositions.set(employeeId, { x: hierarchy.x, y: hierarchy.y });
+
+          hierarchy.subordinates.forEach(sub => {
+            if (!processedNodes.has(sub.id)) {
+              nextLevelNodes.push(sub.id);
+            }
+          });
+        }
+      });
+
+      currentLevelNodes = nextLevelNodes;
+      currentLevel++;
+    }
+
+    // Second pass: Adjust for single subordinates
+    const levelNodes = new Map();
+    positionedNodes.forEach((position, employeeId) => {
+      if (!levelNodes.has(position.level)) {
+        levelNodes.set(position.level, []);
+      }
+      levelNodes.get(position.level).push({ id: employeeId, position });
+    });
+
+    levelNodes.forEach((nodes, level) => {
+      if (level > 0) {
+        nodes.sort((a, b) => {
+          const empA = employeeMap.get(a.id);
+          const empB = employeeMap.get(b.id);
+          if (!empA?.managerId || !empB?.managerId) return 0;
+          const managerA = parentPositions.get(empA.managerId);
+          const managerB = parentPositions.get(empB.managerId);
+          if (!managerA || !managerB) return 0;
+          return managerA.x - managerB.x;
+        });
+
+        const levelStartX = -((nodes.length - 1) * levelWidth) / 2;
+        nodes.forEach((node, index) => {
+          const startX = levelStartX + index * levelWidth;
+          const hierarchy = calculateHierarchy(node.id, level, startX, levelWidth);
+          if (hierarchy) {
+            const employee = employeeMap.get(node.id);
+            if (employee && employee.managerId) {
+              const managerPosition = parentPositions.get(employee.managerId);
+              const siblings = employees.filter(emp => emp.managerId === employee.managerId);
+              if (siblings.length === 1 && managerPosition) {
+                hierarchy.x = managerPosition.x;
+              }
+            }
+            positionedNodes.set(node.id, hierarchy);
+          }
+        });
+      }
+    });
+
+    return positionedNodes;
+  };
+
   // Create React Flow nodes and edges from employee hierarchy
   const { nodes, edges } = useMemo(() => {
     if (!employees || employees.length === 0) {
       return { nodes: [], edges: [] };
     }
 
-    // Better layout for full screen usage
+    // Calculate organized positions if Monday.com data is loaded
+    const organizedPositions = mondayDataLoaded ? calculateOrganizedPositions(employees) : null;
+
+    // Create nodes with organized positions if available, otherwise use grid layout
     const flowNodes = employees.map((employee, index) => {
-      const col = index % 4; // 4 nodes per row for better spacing
-      const row = Math.floor(index / 4);
+      let position;
+      
+      if (organizedPositions && organizedPositions.has(employee.id)) {
+        // Use organized position from Monday.com data
+        const orgPosition = organizedPositions.get(employee.id);
+        position = { x: orgPosition.x, y: orgPosition.y };
+      } else {
+        // Default grid layout for non-Monday.com data
+        const col = index % 4;
+        const row = Math.floor(index / 4);
+        position = {
+          x: col * 400 + 100,
+          y: row * 300 + 100
+        };
+      }
 
       return {
         id: String(employee.id),
         type: 'employeeNode',
-        position: {
-          x: col * 400 + 100,  // More spacing horizontally with offset
-          y: row * 300 + 100   // More spacing vertically with offset
-        },
+        position,
         data: {
           employee,
           onEdit: onEditEmployee,
@@ -478,7 +629,7 @@ const OrgChart = ({
     // Debug logs removed for cleaner output
 
     return { nodes: flowNodes, edges: flowEdges };
-  }, [employees, onEditEmployee, onDeleteEmployee, onViewEmployee, designSettings.edgeColor, designSettings.edgeType, designSettings.edgeWidth]);
+  }, [employees, onEditEmployee, onDeleteEmployee, onViewEmployee, designSettings.edgeColor, designSettings.edgeType, designSettings.edgeWidth, mondayDataLoaded]);
 
   const [flowNodes, setNodes, onNodesChange] = useNodesState([]);
   const [flowEdges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -505,14 +656,64 @@ const OrgChart = ({
       const currentFlowNodeIds = new Set(flowNodes.map(fn => fn.id));
       const newEmployeeIds = nodes.filter(n => !currentFlowNodeIds.has(String(n.id))).map(n => n.id);
 
+      // Check if any node data has changed
+      let hasDataChanges = false;
+
+      // If Monday.com data is loaded, recalculate organized positions for new nodes
+      const organizedPositions = mondayDataLoaded && newEmployeeIds.length > 0 
+        ? calculateOrganizedPositions(employees) 
+        : null;
+
+      // Migrate positions when IDs change (e.g., tempId -> real Monday.com ID)
+      // Find nodes that might have changed IDs by matching employee data
+      flowNodes.forEach(flowNode => {
+        const matchingNode = nodes.find(n => {
+          // Try to match by employee data if IDs don't match
+          if (String(n.id) !== flowNode.id) {
+            const flowEmployee = flowNode.data?.employee;
+            const nodeEmployee = n.data?.employee;
+            if (flowEmployee && nodeEmployee) {
+              // Match by name and other unique fields
+              return flowEmployee.name === nodeEmployee.name &&
+                     flowEmployee.email === nodeEmployee.email;
+            }
+          }
+          return false;
+        });
+        
+        if (matchingNode && String(matchingNode.id) !== flowNode.id) {
+          // Migrate position from old ID to new ID
+          const oldPosition = nodePositionsRef.current.get(flowNode.id);
+          if (oldPosition) {
+            console.log(`🔄 Migrating node position from ${flowNode.id} to ${matchingNode.id}`);
+            nodePositionsRef.current.set(String(matchingNode.id), oldPosition);
+            nodePositionsRef.current.delete(flowNode.id);
+          }
+        }
+      });
+
       // Process all employees
       nodes.forEach(originalNode => {
         const existingFlowNode = flowNodes.find(fn => fn.id === String(originalNode.id));
         const savedPosition = nodePositionsRef.current.get(String(originalNode.id));
 
         if (existingFlowNode) {
-          // Update existing node while preserving position
-          const position = savedPosition || existingFlowNode.position;
+          // Check if employee data has changed by comparing JSON strings
+          const existingDataStr = JSON.stringify(existingFlowNode.data);
+          const newDataStr = JSON.stringify(originalNode.data);
+          if (existingDataStr !== newDataStr) {
+            hasDataChanges = true;
+          }
+
+          // Update existing node while preserving position (use organized position if available)
+          let position = savedPosition || existingFlowNode.position;
+          
+          // If Monday.com data is loaded and we have organized positions, use them
+          if (mondayDataLoaded && organizedPositions && organizedPositions.has(parseInt(originalNode.id))) {
+            const orgPosition = organizedPositions.get(parseInt(originalNode.id));
+            position = { x: orgPosition.x, y: orgPosition.y };
+          }
+          
           updatedNodes.push({
             ...existingFlowNode,
             position,
@@ -522,11 +723,18 @@ const OrgChart = ({
             selectable: originalNode.selectable,
           });
         } else {
-          // Add new node with default position
-          const position = savedPosition || {
-            x: (updatedNodes.length % 4) * 400 + 100,
-            y: Math.floor(updatedNodes.length / 4) * 300 + 100
-          };
+          // Add new node - use organized position if Monday.com data is loaded
+          let position;
+          if (mondayDataLoaded && organizedPositions && organizedPositions.has(parseInt(originalNode.id))) {
+            const orgPosition = organizedPositions.get(parseInt(originalNode.id));
+            position = { x: orgPosition.x, y: orgPosition.y };
+          } else {
+            position = savedPosition || {
+              x: (updatedNodes.length % 4) * 400 + 100,
+              y: Math.floor(updatedNodes.length / 4) * 300 + 100
+            };
+          }
+          
           const newNode = {
             ...originalNode,
             position,
@@ -538,12 +746,12 @@ const OrgChart = ({
         }
       });
 
-      // Only update if there are actual changes
-      if (updatedNodes.length !== flowNodes.length || newEmployeeIds.length > 0) {
+      // Update if there are structural changes (additions/removals) or data changes
+      if (updatedNodes.length !== flowNodes.length || newEmployeeIds.length > 0 || hasDataChanges) {
         setNodes(updatedNodes);
       }
     }
-  }, [nodes]); // Only depend on nodes, not flowNodes to avoid circular dependency
+  }, [nodes, mondayDataLoaded, employees]); // Include mondayDataLoaded and employees to recalculate positions
 
   // Store node positions when they change (simplified approach)
   useEffect(() => {
@@ -571,16 +779,42 @@ const OrgChart = ({
     }
   }, [edges, setEdges]);
 
-  // Automatically organize and fit view after Monday.com data is loaded and organized
+  // Automatically fit view after Monday.com data is loaded (nodes are already organized in useMemo)
   useEffect(() => {
-    if (mondayDataLoaded && nodesInitializedRef.current && employees.length > 0 && flowNodes.length > 0) {
-      // Longer delay to ensure all data processing is complete
+    if (mondayDataLoaded && employees.length > 0 && nodesInitializedRef.current && flowNodes.length > 0) {
+      console.log('📊 Monday.com data loaded - nodes already organized, applying fit view...');
+      // Since nodes are already organized in useMemo, we just need to fit view
       const timeoutId = setTimeout(() => {
-        handleOrganize();
-      }, 500);
+        if (reactFlowInstanceRef.current) {
+          reactFlowInstanceRef.current.fitView({
+            padding: 0.15,
+            includeHiddenNodes: false,
+            minZoom: 0.2,
+            maxZoom: 1.0,
+            duration: 600
+          });
+          console.log('✅ Fit view applied to organized chart');
+        }
+      }, 200);
       return () => clearTimeout(timeoutId);
     }
   }, [mondayDataLoaded, employees.length, flowNodes.length, nodesInitializedRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Automatically organize after employee edit (like after adding new employee)
+  useEffect(() => {
+    if (employeeJustEdited && nodesInitializedRef.current && employees.length > 0 && flowNodes.length > 0) {
+      console.log('🔄 Employee edited - triggering automatic organization');
+      // Delay to ensure all data processing is complete
+      const timeoutId = setTimeout(() => {
+        handleOrganize();
+        // Reset the flag after organization
+        if (setEmployeeJustEdited) {
+          setEmployeeJustEdited(false);
+        }
+      }, 100); // Shorter delay for faster response
+      return () => clearTimeout(timeoutId);
+    }
+  }, [employeeJustEdited, employees.length, flowNodes.length, nodesInitializedRef.current, setEmployeeJustEdited]);
 
   // Edge styling is now handled by custom edge components
 
@@ -804,10 +1038,10 @@ const OrgChart = ({
             includeHiddenNodes: false,
             minZoom: 0.2,  // Allow reasonable zoom out
             maxZoom: 1.0,  // No zoom in
-            duration: 1000 // Smooth animation
+            duration: 600 // Faster animation
           });
         }
-      }, 500);
+      }, 200);
     }
   };
 
@@ -879,13 +1113,17 @@ const OrgChart = ({
       <div className="org-chart-controls">
         <button
           className="control-btn fit-organize-btn"
+          disabled={isOrganizeDisabled}
           onClick={() => {
             handleOrganize();
+            if (setIsOrganizeDisabled) {
+              setIsOrganizeDisabled(true);
+            }
           }}
-          title="Fit View & Organize Chart"
+          title={isOrganizeDisabled ? "Chart is organized - make changes to re-enable" : "Fit View & Organize Chart"}
         >
           <Maximize size={16} />
-          <span>Fit & Organize</span>
+          <span>{isOrganizeDisabled ? "Organized" : "Fit & Organize"}</span>
         </button>
       </div>
 

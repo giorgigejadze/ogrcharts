@@ -1,0 +1,3713 @@
+import React, { useState, useEffect, useRef } from 'react';
+import './App.css';
+import OrgChart from './components/OrgChart';
+import EmployeeForm from './components/EmployeeForm';
+import EmployeeList from './components/EmployeeList';
+import ImportExport from './components/ImportExport';
+import Settings from './components/Settings';
+import { Plus, Users, Settings as SettingsIcon, Sun, Moon, Download, Palette, List, X, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import mondaySdk from "monday-sdk-js";
+const monday = mondaySdk();
+
+function App() {
+  const [employees, setEmployees] = useState([]);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [viewMode, setViewMode] = useState('chart'); // 'chart' or 'list'
+  const [theme, setTheme] = useState('light'); // 'light' or 'dark'
+  const [showImportExportMenu, setShowImportExportMenu] = useState(false);
+  const [showViewMenu, setShowViewMenu] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [activeSettingsSection, setActiveSettingsSection] = useState('field-management');
+  const [showViewPopup, setShowViewPopup] = useState(false);
+  const [viewedEmployee, setViewedEmployee] = useState(null);
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [showAppNavigator, setShowAppNavigator] = useState(false);
+  const [currentTourStep, setCurrentTourStep] = useState(0);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [employeeToDelete, setEmployeeToDelete] = useState(null);
+  const [showSubordinatesError, setShowSubordinatesError] = useState(false);
+  const [employeeWithSubordinates, setEmployeeWithSubordinates] = useState(null);
+  const [isStandaloneMode, setIsStandaloneMode] = useState(false);
+  const [mondayDataLoaded, setMondayDataLoaded] = useState(false);
+  const [boardId, setBoardId] = useState(null);
+  const [columnMappings, setColumnMappings] = useState({});
+  const [designSettings, setDesignSettings] = useState({
+    cardStyle: 'rounded',
+    avatarSize: 'medium',
+    showContactInfo: true,
+    showDepartment: true,
+    primaryColor: '#2563eb',
+    secondaryColor: '#64748b',
+    edgeType: 'straight',
+    edgeColor: '#3b82f6',
+    edgeWidth: 3
+  });
+  const dropdownRef = useRef(null);
+  const viewDropdownRef = useRef(null);
+  const settingsDropdownRef = useRef(null);
+  const orgChartRef = useRef(null);
+
+  useEffect(() => {
+    const savedEmployees = localStorage.getItem('employees');
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    const savedDesignSettings = localStorage.getItem('designSettings');
+    
+    setTheme(savedTheme);
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    
+    // if (savedEmployees) {
+    //   setEmployees(JSON.parse(savedEmployees));
+    // }
+
+    if (savedDesignSettings) {
+      const parsedSettings = JSON.parse(savedDesignSettings);
+      // Merge with default settings to ensure new properties are included
+      const defaultSettings = {
+        cardStyle: 'rounded',
+        avatarSize: 'medium',
+        showContactInfo: true,
+        showDepartment: true,
+        primaryColor: '#2563eb',
+        secondaryColor: '#64748b',
+        edgeType: 'straight',
+        edgeColor: '#3b82f6',
+        edgeWidth: 3
+      };
+      setDesignSettings({ ...defaultSettings, ...parsedSettings });
+    } else {
+      // Initialize with 20 sample employees
+      const generateSampleEmployees = () => {
+        const names = [
+          'John Smith', 'Sarah Johnson', 'Mike Davis', 'Lisa Chen', 'David Wilson',
+          'Emma Wilson', 'James Brown', 'Sophia Davis', 'Michael Johnson', 'Olivia Garcia',
+          'Daniel Miller', 'Ava Rodriguez', 'Christopher Martinez', 'Isabella Anderson', 'Matthew Taylor',
+          'Mia Thomas', 'Andrew Jackson', 'Charlotte White', 'Joshua Harris', 'Amelia Martin',
+          'Ryan Thompson', 'Harper Garcia', 'Nicholas Moore', 'Evelyn Lee', 'Christopher Clark',
+          'Grace Lewis', 'Kevin Hall', 'Chloe Allen', 'Steven Young', 'Zoe King',
+          'Brian Wright', 'Lily Green', 'Timothy Baker', 'Hannah Adams', 'Jeffrey Nelson',
+          'Victoria Carter', 'Mark Mitchell', 'Penelope Perez', 'Donald Roberts', 'Layla Turner',
+          'Paul Phillips', 'Riley Campbell', 'George Parker', 'Nora Evans', 'Edward Edwards',
+          'Scarlett Collins', 'Robert Stewart', 'Aria Morris', 'Thomas Rogers', 'Luna Reed'
+        ];
+
+        const positions = [
+          'CEO', 'CTO', 'CFO', 'COO', 'VP of Engineering', 'VP of Marketing', 'VP of Sales', 'VP of HR',
+          'Senior Software Engineer', 'Software Engineer', 'Frontend Developer', 'Backend Developer', 'Full Stack Developer',
+          'Product Manager', 'Project Manager', 'Scrum Master', 'Business Analyst', 'Data Analyst',
+          'UX Designer', 'UI Designer', 'Graphic Designer', 'Marketing Manager', 'Marketing Specialist',
+          'Sales Manager', 'Sales Representative', 'Account Executive', 'Customer Success Manager',
+          'HR Manager', 'HR Coordinator', 'Recruiter', 'Finance Manager', 'Financial Analyst',
+          'Accountant', 'Operations Manager', 'Operations Specialist', 'DevOps Engineer',
+          'QA Engineer', 'Technical Lead', 'Architect', 'Database Administrator', 'System Administrator',
+          'Content Strategist', 'SEO Specialist', 'Social Media Manager', 'Brand Manager',
+          'Legal Counsel', 'Compliance Officer', 'Security Engineer', 'Network Engineer', 'Support Engineer'
+        ];
+
+        const departments = [
+          'Executive', 'Technology', 'Engineering', 'Product', 'Design', 'Marketing', 'Sales', 
+          'Human Resources', 'Finance', 'Operations', 'Customer Success', 'Business Development', 
+          'Research & Development', 'Legal', 'Security', 'Support'
+        ];
+
+        const employees = [];
+        
+        // Create CEO (no manager)
+        employees.push({
+          id: 1,
+          name: names[0],
+          position: 'CEO',
+          department: 'Executive',
+          email: `${names[0].toLowerCase().replace(' ', '.')}@company.com`,
+          phone: `+1-555-${String(100 + 1).padStart(3, '0')}-${String(1000 + 1).padStart(4, '0')}`,
+          managerId: null,
+          image: null
+        });
+
+        // Create C-level executives (report to CEO)
+        const cLevelPositions = ['CTO', 'CFO', 'COO'];
+        for (let i = 0; i < cLevelPositions.length; i++) {
+          employees.push({
+            id: i + 2,
+            name: names[i + 1],
+            position: cLevelPositions[i],
+            department: cLevelPositions[i] === 'CTO' ? 'Technology' : cLevelPositions[i] === 'CFO' ? 'Finance' : 'Operations',
+            email: `${names[i + 1].toLowerCase().replace(' ', '.')}@company.com`,
+            phone: `+1-555-${String(100 + i + 2).padStart(3, '0')}-${String(1000 + i + 2).padStart(4, '0')}`,
+            managerId: 1,
+            image: null
+          });
+        }
+
+        // Create VPs (report to C-level)
+        const vpPositions = ['VP of Engineering', 'VP of Marketing', 'VP of Sales', 'VP of HR'];
+        const vpDepartments = ['Technology', 'Marketing', 'Sales', 'Human Resources'];
+        for (let i = 0; i < vpPositions.length; i++) {
+          const managerId = i < 2 ? 2 : i < 3 ? 3 : 4; // CTO, CTO, CFO, COO
+          employees.push({
+            id: i + 5,
+            name: names[i + 4],
+            position: vpPositions[i],
+            department: vpDepartments[i],
+            email: `${names[i + 4].toLowerCase().replace(' ', '.')}@company.com`,
+            phone: `+1-555-${String(100 + i + 5).padStart(3, '0')}-${String(1000 + i + 5).padStart(4, '0')}`,
+            managerId: managerId,
+            image: null
+          });
+        }
+
+        // Create remaining employees (report to VPs and other managers)
+        let currentId = 9;
+        for (let i = 9; i < 21; i++) {
+          const name = names[i];
+          const position = positions[Math.floor(Math.random() * positions.length)];
+          const department = departments[Math.floor(Math.random() * departments.length)];
+          
+          // Assign manager based on department and hierarchy
+          let managerId;
+          if (department === 'Technology' || department === 'Engineering') {
+            managerId = Math.random() > 0.5 ? 2 : 5; // CTO or VP Engineering
+          } else if (department === 'Marketing') {
+            managerId = 6; // VP Marketing
+          } else if (department === 'Sales') {
+            managerId = 7; // VP Sales
+          } else if (department === 'Human Resources') {
+            managerId = 8; // VP HR
+          } else if (department === 'Finance') {
+            managerId = 3; // CFO
+          } else if (department === 'Operations') {
+            managerId = 4; // COO
+          } else {
+            // For other departments, randomly assign to existing managers
+            const existingManagers = employees.filter(emp => 
+              emp.position.includes('VP') || emp.position.includes('Manager') || emp.position.includes('Lead')
+            );
+            if (existingManagers.length > 0) {
+              managerId = existingManagers[Math.floor(Math.random() * existingManagers.length)].id;
+            } else {
+              managerId = 1; // Default to CEO
+            }
+          }
+
+          employees.push({
+            id: currentId,
+            name: name,
+            position: position,
+            department: department,
+            email: `${name.toLowerCase().replace(' ', '.')}@company.com`,
+            phone: `+1-555-${String(100 + currentId).padStart(3, '0')}-${String(1000 + currentId).padStart(4, '0')}`,
+            managerId: managerId,
+            image: null
+          });
+          currentId++;
+        }
+
+        return employees;
+      };
+
+      const sampleEmployees = generateSampleEmployees();
+      setEmployees(sampleEmployees);
+      localStorage.setItem('employees', JSON.stringify(sampleEmployees));
+    }
+  }, []);
+
+  // Save employees to localStorage whenever employees change
+  useEffect(() => {
+    localStorage.setItem('employees', JSON.stringify(employees));
+  }, [employees]);
+
+  // Save theme to localStorage and update DOM whenever theme changes
+  useEffect(() => {
+    localStorage.setItem('theme', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowImportExportMenu(false);
+      }
+      if (viewDropdownRef.current && !viewDropdownRef.current.contains(event.target)) {
+        setShowViewMenu(false);
+      }
+      if (settingsDropdownRef.current && !settingsDropdownRef.current.contains(event.target)) {
+        setShowSettingsMenu(false);
+      }
+    };
+
+    if (showImportExportMenu || showViewMenu || showSettingsMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showImportExportMenu, showViewMenu, showSettingsMenu]);
+
+  // Double click outside to close popups
+  useEffect(() => {
+    const handleDoubleClickOutside = (event) => {
+      // Check if click is outside the form overlay, settings modal, and view popup
+      const isOutsideForm = !event.target.closest('.form-overlay');
+      const isOutsideSettings = !event.target.closest('.settings-modal-overlay');
+      const isOutsideViewPopup = !event.target.closest('.view-popup-overlay');
+      
+      if (isOutsideForm && isOutsideSettings && isOutsideViewPopup) {
+        if (showForm) {
+          setShowForm(false);
+          setSelectedEmployee(null);
+        }
+        if (showSettingsModal) {
+          setShowSettingsModal(false);
+        }
+        if (showViewPopup) {
+          closeViewPopup();
+        }
+      }
+    };
+
+    if (showForm || showSettingsModal || showViewPopup) {
+      document.addEventListener('dblclick', handleDoubleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('dblclick', handleDoubleClickOutside);
+    };
+  }, [showForm, showSettingsModal, showViewPopup]);
+
+  // Monday.com SDK context listener with ngrok support
+  useEffect(() => {
+    // Delay SDK initialization to avoid timing issues
+    const initializeSDK = () => {
+      // First, let's check if monday SDK is available
+      if (typeof monday !== 'undefined' && monday.get) {
+        try {
+          // Check if we're in monday.com environment
+          monday.get('context').then((context) => {
+
+            // Apply initial theme from monday.com context
+            if (context && context.data && context.data.theme) {
+              const mondayTheme = context.data.theme;
+              // Convert monday.com themes to app themes
+              // light = light mode, dark/night = dark mode
+              if (mondayTheme === "light") {
+                setTheme("light");
+              } else {
+                // Both "dark" and "night" should result in dark mode
+                setTheme("dark");
+              }
+            }
+
+            return context;
+          }).catch((error) => {
+            return null;
+          }).then((context) => {
+            // Set up context listener
+            if (monday.listen) {
+              monday.listen("context", (res) => {
+                // Apply theme from monday.com context
+                if (res && res.data && res.data.theme) {
+                  const mondayTheme = res.data.theme;
+                  // Convert monday.com themes to app themes
+                  // light = light mode, dark/night = dark mode
+                  if (mondayTheme === "light") {
+                    setTheme("light");
+                  } else {
+                    // Both "dark" and "night" should result in dark mode
+                    setTheme("dark");
+                  }
+                }
+              });
+            }
+
+            // If we have context, use it
+            if (context) {
+              // Store board ID for future API calls
+              if (context.data && context.data.boardId) {
+                setBoardId(context.data.boardId);
+                loadEmployeesFromBoard(context.data.boardId);
+              }
+            } else {
+              // Enable development mode with mock context
+              setIsStandaloneMode(true);
+              setMondayDataLoaded(false); // Reset Monday data flag in standalone mode
+              enableDevelopmentMode();
+            }
+          });
+        } catch (error) {
+          setIsStandaloneMode(true);
+          setMondayDataLoaded(false); // Reset Monday data flag on error
+          enableDevelopmentMode();
+        }
+      } else {
+        // Enable development mode even without SDK
+        setIsStandaloneMode(true);
+        setMondayDataLoaded(false); // Reset Monday data flag without SDK
+        enableDevelopmentMode();
+      }
+    };
+
+    // Initialize after a longer delay to ensure SDK is fully loaded
+    setTimeout(initializeSDK, 500);
+  }, []);
+
+  // Development mode helper for ngrok testing
+  const enableDevelopmentMode = () => {
+    // Add development controls to window for easy testing
+    window.mondayDev = {
+      // Trigger mock context event
+      triggerContext: (mockData = null) => {
+        const defaultContext = {
+          data: {
+            boardId: 12345,
+            itemId: 67890,
+            theme: "light", // Monday.com theme
+            user: {
+              id: "1234567890",
+              name: "John Developer",
+              email: "john.developer@company.com"
+            },
+            board: {
+              id: 12345,
+              name: "Employee Data Board"
+            },
+            item: {
+              id: 67890,
+              name: "Employee Record"
+            }
+          },
+          timestamp: Date.now()
+        };
+
+        const contextData = mockData || defaultContext;
+        // Simulate the context event
+        const mockEvent = new CustomEvent('mondayContext', { detail: contextData });
+        document.dispatchEvent(mockEvent);
+
+        return contextData;
+      },
+
+      // Mock API for testing
+      api: (query) => {
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            // Mock response for board items query
+            if (query.includes('boards(ids:')) {
+              const mockEmployees = [
+                {
+                  id: '1',
+                  name: 'გიორგი ბერიძე',
+                  group: { id: 'group1', title: 'Executive' },
+                  column_values: [
+                    { id: 'person', text: 'გიორგი ბერიძე', type: 'people', value: JSON.stringify({
+                      personsAndTeams: [{
+                        id: 12345,
+                        first_name: 'გიორგი',
+                        last_name: 'ბერიძე',
+                        email: 'giorgi.beridze@company.com',
+                        photo_original: null,
+                        photo_small: null
+                      }]
+                    })},
+                    { id: 'position', text: 'პოზიცია' },  // Georgian title
+                    { id: 'dept', text: 'განყოფილება' }, // Different ID, Georgian title
+                    { id: 'telephone', text: 'ტელეფონი' }, // Different ID, Georgian title
+                    { id: 'office_location', text: 'ოფისი' }, // Different ID, Georgian title
+                    { id: 'employment_start', text: 'დასაქმების თარიღი' }, // Different ID, Georgian title
+                    { id: 'compensation', text: 'ანაზღაურება' }, // Different ID, Georgian title
+                    { id: 'work_experience', text: 'სამუშაო გამოცდილება', type: 'numbers' }, // Different ID, Georgian title
+                    { id: 'performance_level', text: 'შესრულების დონე', type: 'status' } // Status column with Georgian title
+                  ]
+                },
+                {
+                  id: '2',
+                  name: 'მარიამი კობახიძე',
+                  group: { id: 'group2', title: 'Technology' },
+                  column_values: [
+                    { id: 'person', text: 'მარიამი კობახიძე', type: 'people', value: JSON.stringify({
+                      personsAndTeams: [{
+                        id: 12346,
+                        first_name: 'მარიამი',
+                        last_name: 'კობახიძე',
+                        email: 'mariam.kobakhidze@company.com',
+                        photo_original: null,
+                        photo_small: null
+                      }]
+                    })},
+                    { id: 'job_title', text: 'ტექნიკური დირექტორი' }, // Different ID, Georgian title
+                    { id: 'division', text: 'ტექნოლოგიები' }, // Different ID, Georgian title
+                    { id: 'mobile_phone', text: 'მობილური ტელეფონი' }, // Different ID, Georgian title
+                    { id: 'supervisor', text: 'გიორგი ბერიძე' }, // Different ID
+                    { id: 'work_location', text: 'სამუშაო ადგილი' }, // Different ID, Georgian title
+                    { id: 'hire_date', text: 'დასაქმების თარიღი' }, // Different ID, Georgian title
+                    { id: 'monthly_pay', text: 'თვიური ხელფასი' }, // Different ID, Georgian title
+                    { id: 'years_experience', text: 'გამოცდილების წლები', type: 'numbers' }, // Different ID, Georgian title
+                    { id: 'contract_type', text: 'ხელშეკრულების ტიპი', type: 'status' } // Status column
+                  ]
+                },
+                {
+                  id: '3',
+                  name: 'დავითი გელაშვილი',
+                  group: { id: 'group2', title: 'Technology' },
+                  column_values: [
+                    { id: 'person', text: 'დავითი გელაშვილი', type: 'people', value: JSON.stringify({
+                      personsAndTeams: [{
+                        id: 12347,
+                        first_name: 'დავითი',
+                        last_name: 'გელაშვილი',
+                        email: 'daviti.gelashvili@company.com',
+                        photo_original: null,
+                        photo_small: null
+                      }]
+                    })},
+                    { id: 'position', text: 'Senior Developer' },
+                    { id: 'department', text: 'Technology' },
+                    { id: 'phone', text: '+995-555-123458' },
+                    { id: 'manager', text: 'მარიამი კობახიძე' },
+                    { id: 'location', text: 'Tbilisi' },
+                    { id: 'start_date', text: '2021-06-01' },
+                    { id: 'salary', text: '35000' },
+                    { id: 'experience_years', text: '8', type: 'numbers' },
+                    { id: 'performance_rating', text: '4.5', type: 'rating' },
+                    { id: 'employment_status', text: 'Full-time', type: 'status' }
+                  ]
+                },
+                {
+                  id: '4',
+                  name: 'ნინო ნაცვლიშვილი',
+                  group: { id: 'group3', title: 'Human Resources' },
+                  column_values: [
+                    { id: 'person', text: 'ნინო ნაცვლიშვილი', type: 'people', value: JSON.stringify({
+                      personsAndTeams: [{
+                        id: 12348,
+                        first_name: 'ნინო',
+                        last_name: 'ნაცვლიშვილი',
+                        email: 'nino.natsvlishvili@company.com',
+                        photo_original: null,
+                        photo_small: null
+                      }]
+                    })},
+                    { id: 'position', text: 'HR Manager' },
+                    { id: 'department', text: 'Human Resources' },
+                    { id: 'phone', text: '+995-555-123459' },
+                    { id: 'manager', text: 'გიორგი ბერიძე' }
+                  ]
+                },
+                {
+                  id: '5',
+                  name: 'ალექსი მაისურაძე',
+                  group: { id: 'group4', title: 'Design' },
+                  column_values: [
+                    { id: 'person', text: 'ალექსი მაისურაძე', type: 'people', value: JSON.stringify({
+                      personsAndTeams: [{
+                        id: 12349,
+                        first_name: 'ალექსი',
+                        last_name: 'მაისურაძე',
+                        email: 'aleksi.maisuradze@company.com',
+                        photo_original: null,
+                        photo_small: null
+                      }]
+                    })},
+                    { id: 'position', text: 'Designer' },
+                    { id: 'department', text: 'Design' },
+                    { id: 'phone', text: '+995-555-123460' },
+                    { id: 'manager', text: 'მარიამი კობახიძე' }
+                  ]
+                }
+              ];
+
+              resolve({
+                data: {
+                  boards: [{
+                    name: 'Employee Data Board',
+                    groups: [
+                      { id: 'group1', title: 'Executive' },
+                      { id: 'group2', title: 'Technology' },
+                      { id: 'group3', title: 'Human Resources' },
+                      { id: 'group4', title: 'Design' }
+                    ],
+                    items_page: {
+                      items: mockEmployees
+                    }
+                  }]
+                }
+              });
+            } else {
+              resolve({ data: null });
+            }
+          }, 500); // Simulate API delay
+        });
+      },
+
+      // Get current mock context
+      getMockContext: () => {
+        return {
+          data: {
+            boardId: 12345,
+            itemId: 67890,
+            theme: "light", // Monday.com theme
+            user: {
+              id: "1234567890",
+              name: "John Developer",
+              email: "john.developer@company.com"
+            },
+            board: {
+              id: 12345,
+              name: "Employee Data Board"
+            },
+            item: {
+              id: 67890,
+              name: "Employee Record"
+            }
+          },
+          timestamp: Date.now()
+        };
+      },
+
+      // Listen for custom events (for testing)
+      onContext: (callback) => {
+        document.addEventListener('mondayContext', (event) => {
+          callback(event.detail);
+        });
+      },
+
+      // Test theme switching
+      setLightTheme: () => {
+        const lightContext = {
+          data: { ...window.mondayDev.getMockContext().data, theme: "light" },
+          timestamp: Date.now()
+        };
+        window.mondayDev.triggerContext(lightContext);
+      },
+
+      setDarkTheme: () => {
+        const darkContext = {
+          data: { ...window.mondayDev.getMockContext().data, theme: "dark" },
+          timestamp: Date.now()
+        };
+        window.mondayDev.triggerContext(darkContext);
+      },
+
+      setNightTheme: () => {
+        const nightContext = {
+          data: { ...window.mondayDev.getMockContext().data, theme: "night" },
+          timestamp: Date.now()
+        };
+        window.mondayDev.triggerContext(nightContext);
+      }
+    };
+
+    // Listen for our custom monday context events
+    window.mondayDev.onContext((contextData) => {
+      // Apply theme from mock context
+      if (contextData && contextData.data && contextData.data.theme) {
+        const mondayTheme = contextData.data.theme;
+        // Convert monday.com themes to app themes
+        // light = light mode, dark/night = dark mode
+        if (mondayTheme === "light") {
+          setTheme("light");
+        } else {
+          // Both "dark" and "night" should result in dark mode
+          setTheme("dark");
+        }
+      }
+    });
+
+    // Add keyboard shortcuts for testing
+    document.addEventListener('keydown', (event) => {
+      if (event.ctrlKey && event.key === 'm') {
+        event.preventDefault();
+        window.mondayDev.triggerContext();
+      } else if (event.ctrlKey && event.key === 'l') {
+        event.preventDefault();
+        window.mondayDev.setLightTheme();
+      } else if (event.ctrlKey && event.key === 'd') {
+        event.preventDefault();
+        window.mondayDev.setDarkTheme();
+      } else if (event.ctrlKey && event.key === 'n') {
+        event.preventDefault();
+        window.mondayDev.setNightTheme();
+      }
+    });
+
+  };
+
+  // Context menu event listeners
+  useEffect(() => {
+    const handleGlobalContextMenu = (event) => {
+      // Don't show context menu on form overlays, modals, or dropdowns
+      if (event.target.closest('.form-overlay') || 
+          event.target.closest('.settings-modal-overlay') || 
+          event.target.closest('.view-popup-overlay') ||
+          event.target.closest('.dropdown-menu')) {
+        return;
+      }
+      handleContextMenu(event);
+    };
+
+    const handleGlobalClick = () => {
+      closeContextMenu();
+    };
+
+    document.addEventListener('contextmenu', handleGlobalContextMenu);
+    document.addEventListener('click', handleGlobalClick);
+
+    return () => {
+      document.removeEventListener('contextmenu', handleGlobalContextMenu);
+      document.removeEventListener('click', handleGlobalClick);
+    };
+  }, []);
+
+  // Load employees from Monday.com board
+  const loadEmployeesFromBoard = async (boardId) => {
+
+    try {
+      // Query to get board items with person details and board structure
+      // Using column_values with all necessary fields for Monday.com API v2
+      const query = `query {
+        boards(ids: [${boardId}]) {
+          name
+          groups {
+            id
+            title
+          }
+          items_page(limit: 500) {
+            items {
+              id
+              name
+              group {
+                id
+                title
+              }
+              column_values {
+                id
+                text
+                value
+                type
+                ... on StatusValue {
+                  text
+                  index
+                }
+                ... on TextValue {
+                  text
+                }
+                ... on PeopleValue {
+                  persons_and_teams {
+                    id
+                    kind
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`;
+
+      const response = await monday.api(query);
+
+      if (response.data && response.data.boards && response.data.boards[0]) {
+        const board = response.data.boards[0];
+        const items = board.items_page.items;
+
+        console.log('📊 Monday.com-დან მიღებული მონაცემები:', items.map(item => ({
+          id: item.id,
+          name: item.name,
+          group: item.group?.title,
+          column_values: item.column_values.map(col => ({
+            id: col.id,
+            text: col.text,
+            type: col.type,
+            value: col.value
+          }))
+        })));
+
+        // Detect column mappings from the board structure
+        const detectedMappings = {};
+        if (items.length > 0 && items[0].column_values) {
+          const sampleItem = items[0];
+
+          // Analyze each column to determine what field it represents
+          sampleItem.column_values.forEach(col => {
+            const columnId = col.id;
+            const columnText = (col.text || '').toLowerCase().trim();
+            const columnType = col.type;
+
+            console.log(`🔍 Analyzing column: ID=${columnId}, Text="${col.text}", Type=${columnType}`);
+
+            // Map columns based on their text/header names and types
+            // Only map to appropriate column types (not files) and prevent duplicate mappings
+            if (columnType !== 'file' && columnType !== 'files') {
+              // Check if this column is already mapped to prevent duplicates
+              const existingMapping = Object.keys(detectedMappings).find(key => detectedMappings[key] === columnId);
+
+              if (existingMapping) {
+                console.log(`⏭️ Skipping column ${columnId} "${col.text}" - already mapped to ${existingMapping}`);
+              } else {
+                if (columnText.includes('position') || columnText.includes('პოზიცია') || columnText === 'role' || columnText.includes('title') || columnText.includes('job') || columnText.includes('function')) {
+                  // Position should only be mapped to text columns
+                  if (!detectedMappings.position && columnType === 'text') {
+                    detectedMappings.position = columnId;
+                    console.log(`✅ Mapped POSITION to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('department') || columnText.includes('განყოფილება') || columnText.includes('dept') || columnText.includes('division') || columnText.includes('team') || columnText.includes('group') || columnText.includes('unit') || columnText.includes('sector') || columnText.includes('branch')) {
+                  // Department can be mapped to dropdown or text columns
+                  if (!detectedMappings.department && (columnType === 'text' || columnType === 'dropdown' || columnType === 'status')) {
+                    detectedMappings.department = columnId;
+                    console.log(`✅ Mapped DEPARTMENT to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('manager') || columnText.includes('მენეჯერი') || columnText.includes('supervisor') || columnText.includes('boss') || columnText.includes('lead') || columnText.includes('reports to') || columnText.includes('superior') || columnText.includes('head') || columnText.includes('director') || columnText.includes('chief')) {
+                  if (!detectedMappings.manager) {
+                    detectedMappings.manager = columnId;
+                    console.log(`✅ Mapped MANAGER to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('email') || columnText.includes('ელფოსტა') || columnText.includes('e-mail') || columnText.includes('mail') || columnText.includes('@')) {
+                  if (!detectedMappings.email) {
+                    detectedMappings.email = columnId;
+                    console.log(`✅ Mapped EMAIL to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('phone') || columnText.includes('ტელეფონი') || columnText.includes('mobile') || columnText.includes('contact') || columnText.includes('tel') || columnText.includes('telephone') || columnText.includes('cell') || columnText.includes('number')) {
+                  // Only map phone to text columns, not dropdown columns
+                  if (!detectedMappings.phone && (columnType === 'text' || columnType === 'phone')) {
+                    detectedMappings.phone = columnId;
+                    console.log(`✅ Mapped PHONE to column ${columnId} (type: ${columnType})`);
+                  } else if (columnType === 'dropdown' || columnType === 'status') {
+                    console.log(`⏭️ Skipping dropdown column ${columnId} for phone mapping`);
+                  }
+                } else if (columnText.includes('image') || columnText.includes('photo') || columnText.includes('avatar') || columnText.includes('სურათი') || columnText.includes('picture') || columnText.includes('pic')) {
+                  if (!detectedMappings.image) {
+                    detectedMappings.image = columnId;
+                    console.log(`✅ Mapped IMAGE to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('location') || columnText.includes('ადგილმდებარეობა') || columnText.includes('office') || columnText.includes('city') || columnText.includes('address')) {
+                  // If it's specifically address, map to address instead
+                  if (columnText.includes('address') || columnText.includes('მისამართი')) {
+                    if (!detectedMappings.address) {
+                      detectedMappings.address = columnId;
+                      console.log(`✅ Mapped ADDRESS to column ${columnId} (type: ${columnType})`);
+                    }
+                  } else {
+                    if (!detectedMappings.location) {
+                      detectedMappings.location = columnId;
+                      console.log(`✅ Mapped LOCATION to column ${columnId} (type: ${columnType})`);
+                    }
+                  }
+                } else if ((columnText.includes('start') && columnText.includes('date')) || columnText.includes('hire date') || columnText.includes('join date') || columnText.includes('employment date')) {
+                  if (!detectedMappings.startDate) {
+                    detectedMappings.startDate = columnId;
+                    console.log(`✅ Mapped START_DATE to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('salary') || columnText.includes('ხელფასი') || columnText.includes('pay') || columnText.includes('compensation') || columnText.includes('wage') || columnText.includes('income')) {
+                  if (!detectedMappings.salary) {
+                    detectedMappings.salary = columnId;
+                    console.log(`✅ Mapped SALARY to column ${columnId} (type: ${columnType})`);
+                  }
+                } else if (columnText.includes('notes') || columnText.includes('შენიშვნები') || columnText.includes('comments') || columnText.includes('description') || columnText.includes('remarks')) {
+                  if (!detectedMappings.notes) {
+                    detectedMappings.notes = columnId;
+                    console.log(`✅ Mapped NOTES to column ${columnId} (type: ${columnType})`);
+                  }
+                }
+              }
+            } else {
+              console.log(`⏭️ Skipping column ${columnId} "${col.text}" (type: ${columnType} - not suitable for text data)`);
+            }
+          });
+
+          console.log('🗺️ FINAL column mappings:', detectedMappings);
+          console.log('📊 Mapping summary:', Object.keys(detectedMappings).length, 'mappings found');
+
+          // Check for duplicate mappings
+          const mappedColumns = Object.values(detectedMappings);
+          const duplicates = mappedColumns.filter((item, index) => mappedColumns.indexOf(item) !== index);
+          if (duplicates.length > 0) {
+            console.log('🚨 DUPLICATE MAPPINGS DETECTED:', duplicates);
+            Object.entries(detectedMappings).forEach(([field, columnId]) => {
+              if (duplicates.includes(columnId)) {
+                console.log(`   ${field} → ${columnId} (DUPLICATE)`);
+              }
+            });
+          }
+
+          // Show all columns with detailed information
+          console.log('📋 ALL COLUMNS in Monday.com board:');
+          sampleItem.column_values.forEach(col => {
+            const isMapped = Object.values(detectedMappings).includes(col.id);
+            const mappingKey = Object.keys(detectedMappings).find(key => detectedMappings[key] === col.id);
+            console.log(`   ${isMapped ? '✅' : '❌'} Column ID: ${col.id}, Name: "${col.text}", Type: ${col.type}${mappingKey ? ` → MAPPED AS: ${mappingKey.toUpperCase()}` : ''}`);
+          });
+
+          // Summary of what we found
+          console.log('📈 COLUMN DETECTION SUMMARY:');
+          console.log(`   Position: ${detectedMappings.position ? '✅ Found' : '❌ Not found'}`);
+          console.log(`   Department: ${detectedMappings.department ? '✅ Found' : '❌ Not found'}`);
+          console.log(`   Manager: ${detectedMappings.manager ? '✅ Found' : '❌ Not found'}`);
+          console.log(`   Phone: ${detectedMappings.phone ? '✅ Found' : '❌ Not found'}`);
+          console.log(`   Email: ${detectedMappings.email ? '✅ Found' : '❌ Not found'}`);
+
+          console.log('📋 Intermediate mappings after main detection:', detectedMappings);
+
+          // Additional detection for any unmapped columns (exclude file columns)
+          console.log('🔍 Checking for additional unmapped columns...');
+          const availableColumns = sampleItem.column_values;
+
+          // Get list of unmapped columns (text, dropdown, status, board_relation - but NOT files)
+          const unmappedColumns = availableColumns.filter(col =>
+            !Object.values(detectedMappings).includes(col.id) &&
+            (col.type === 'text' || col.type === 'status' || col.type === 'dropdown' || col.type === 'board_relation') &&
+            col.type !== 'file' && col.type !== 'files'
+          );
+
+          console.log(`📊 Found ${unmappedColumns.length} unmapped suitable columns (excluding files)`);
+          unmappedColumns.forEach(col => {
+            console.log(`   Unmapped: ${col.id} "${col.text}" (type: ${col.type})`);
+          });
+
+          // Try to map unmapped columns to remaining employee fields
+          const fieldsToMap = ['department', 'manager', 'phone', 'image'];
+          let mappingIndex = 0;
+
+          unmappedColumns.forEach(col => {
+            if (mappingIndex < fieldsToMap.length) {
+              const fieldName = fieldsToMap[mappingIndex];
+              // Special handling for different field types
+              if (fieldName === 'phone' && (col.type === 'dropdown' || col.type === 'status')) {
+                console.log(`⏭️ Skipping dropdown column ${col.id} for phone mapping`);
+                return; // Skip this column for phone mapping
+              }
+              // Department can be mapped to dropdown columns
+              if (fieldName === 'department' && col.type === 'dropdown') {
+                console.log(`🎯 Found dropdown column ${col.id} for department mapping`);
+              }
+              if (!detectedMappings[fieldName]) {
+                detectedMappings[fieldName] = col.id;
+                console.log(`🔄 Fallback mapping - ${fieldName.toUpperCase()}: ${col.id} "${col.text}" (type: ${col.type})`);
+                mappingIndex++;
+              }
+            }
+          });
+
+          // If we still don't have mappings for key fields, try more aggressive matching
+          if (!detectedMappings.department || !detectedMappings.manager || !detectedMappings.phone) {
+            console.log('⚠️ Some key fields still unmapped, trying aggressive matching...');
+
+            availableColumns.forEach(col => {
+              const columnText = (col.text || '').toLowerCase().trim();
+
+              if (!detectedMappings.department && (columnText.includes('team') || columnText.includes('group') || columnText.includes('unit') || columnText.includes('dept') || columnText.length <= 10) && (col.type === 'text' || col.type === 'dropdown' || col.type === 'status')) {
+                detectedMappings.department = col.id;
+                console.log(`🎯 Aggressive mapping - DEPARTMENT: ${col.id} "${col.text}" (type: ${col.type})`);
+              } else if (!detectedMappings.manager && (columnText.includes('report') || columnText.includes('superior') || columnText.includes('chief'))) {
+                detectedMappings.manager = col.id;
+                console.log(`🎯 Aggressive mapping - MANAGER: ${col.id} "${col.text}"`);
+              } else if (!detectedMappings.phone && (columnText.includes('contact') || columnText.includes('cell') || columnText.includes('communication')) && (col.type === 'text' || col.type === 'phone')) {
+                detectedMappings.phone = col.id;
+                console.log(`🎯 Aggressive mapping - PHONE: ${col.id} "${col.text}" (type: ${col.type})`);
+              }
+            });
+          }
+
+          // Try to map more columns by looking at column IDs and types
+          sampleItem.column_values.forEach(col => {
+            const columnId = col.id;
+            const columnText = (col.text || '').toLowerCase().trim();
+            const columnType = col.type;
+
+            // Additional mapping by column ID patterns
+            if (columnId.includes('text') && !detectedMappings.position) {
+              // First available text column could be position
+              detectedMappings.position = columnId;
+              console.log(`🔄 Additional mapping - POSITION: ${columnId} (${col.text})`);
+            } else if (columnId.includes('text') && !detectedMappings.department && detectedMappings.position !== columnId) {
+              // Second text column could be department
+              detectedMappings.department = columnId;
+              console.log(`🔄 Additional mapping - DEPARTMENT: ${columnId} (${col.text})`);
+            } else if (columnId.includes('text') && !detectedMappings.phone && detectedMappings.position !== columnId && detectedMappings.department !== columnId) {
+              // Third text column could be phone
+              detectedMappings.phone = columnId;
+              console.log(`🔄 Additional mapping - PHONE: ${columnId} (${col.text})`);
+            }
+
+            // Map by type if text contains common words
+            if (columnType === 'text' && columnText.includes('pos')) {
+              detectedMappings.position = columnId;
+              console.log(`🔄 Type-based mapping - POSITION: ${columnId} (${col.text})`);
+            } else if (columnType === 'text' && columnText.includes('dept')) {
+              detectedMappings.department = columnId;
+              console.log(`🔄 Type-based mapping - DEPARTMENT: ${columnId} (${col.text})`);
+            } else if (columnType === 'text' && columnText.includes('phone')) {
+              detectedMappings.phone = columnId;
+              console.log(`🔄 Type-based mapping - PHONE: ${columnId} (${col.text})`);
+            }
+          });
+
+          console.log('🎯 Final column mappings after additional detection:', detectedMappings);
+
+          // If still no mappings found, try common Monday.com column patterns
+          if (Object.keys(detectedMappings).length <= 1) { // Only email or nothing
+            console.log('⚠️ Limited mappings found, trying fallback patterns...');
+
+            const availableColumns = sampleItem.column_values;
+            const textColumns = availableColumns.filter(col => col.type === 'text' && !col.id.includes('email'));
+
+            // Assign text columns in order: position, department, phone, manager
+            const fieldsToAssign = ['position', 'department', 'phone', 'manager'];
+            textColumns.slice(0, 4).forEach((col, index) => {
+              const field = fieldsToAssign[index];
+              if (!detectedMappings[field]) {
+                detectedMappings[field] = col.id;
+                console.log(`🔄 Fallback mapping - ${field.toUpperCase()}: ${col.id} (${col.text})`);
+              }
+            });
+
+            console.log('🎯 Final mappings after fallback:', detectedMappings);
+          }
+
+          setColumnMappings(detectedMappings);
+        }
+
+        // Check if column_values exist in API response
+        if (items.length > 0) {
+          const firstItem = items[0];
+          
+          // Check if column_values is empty or null
+          if (!firstItem.column_values || firstItem.column_values.length === 0) {
+            console.error('❌ column_values is empty or null!');
+            console.error('   This might be a permissions issue.');
+            console.error('   Make sure your Monday.com app has these scopes:');
+            console.error('   - boards:read');
+            console.error('   - items:read');
+          }
+        }
+
+        // Helper functions for enhanced text matching and value extraction
+        const normalizeText = (text) => {
+          return text
+            .toLowerCase()
+            .trim()
+            // Remove special characters and punctuation, but keep some meaningful ones
+            .replace(/[^\w\s\u10D0-\u10FF\-_]/g, ' ') // Keep Georgian, hyphens, underscores
+            // Normalize multiple spaces
+            .replace(/\s+/g, ' ')
+            // Remove common prefixes/suffixes that don't affect meaning
+            .replace(/^(the|a|an)\s+/i, '')
+            .replace(/\s+(column|field|value|data)$/i, '')
+            // Normalize common abbreviations
+            .replace(/\bdept\b/g, 'department')
+            .replace(/\bpos\b/g, 'position')
+            .replace(/\bmgmt\b/g, 'management')
+            .replace(/\bmg\b/g, 'manager')
+            .replace(/\bsup\b/g, 'supervisor')
+            .trim();
+        };
+
+        // Enhanced value extraction from monday.com column
+        const extractColumnValue = (column) => {
+          if (!column) return null;
+
+          // Debug logging for column extraction
+          // console.log('🔍 Processing column:', column.id, 'type:', column.type, 'text:', column.text, 'value:', column.value);
+
+          // Priority 1: Use text field (most common for display values)
+          if (column.text && column.text.trim()) {
+            // For some column types, text might be the column header, not the value
+            // Check if text looks like a column header (contains common header words)
+            const textLower = column.text.toLowerCase();
+            const headerIndicators = ['column', 'field', 'name', 'title', 'header'];
+
+            // If text contains header indicators or is very short, it might be a header
+            if (headerIndicators.some(indicator => textLower.includes(indicator)) || textLower.length < 3) {
+              // Try to get value from value field instead
+              if (column.value) {
+                try {
+                  const parsed = JSON.parse(column.value);
+                  // Different column types have different value structures
+                  if (typeof parsed === 'string') {
+                    return parsed.trim();
+                  } else if (parsed && typeof parsed === 'object') {
+                    // Try common value structures
+                    return parsed.text || parsed.value || parsed.name || parsed.label || parsed.title || null;
+                  }
+                } catch (e) {
+                  // If not JSON, use value directly
+                  return String(column.value).trim();
+                }
+              }
+            } else {
+              // Text seems to be the actual value
+              return column.text.trim();
+            }
+          }
+
+          // Priority 2: Try value field
+          if (column.value) {
+            try {
+              const parsed = JSON.parse(column.value);
+              if (typeof parsed === 'string') {
+                return parsed.trim();
+              } else if (parsed && typeof parsed === 'object') {
+                // Handle different monday.com column types
+                switch (column.type) {
+                  case 'text':
+                  case 'long_text':
+                    return parsed.text || parsed.value;
+                  case 'status':
+                    return parsed.text || parsed.label || parsed.index;
+                  case 'dropdown':
+                  case 'multiple_dropdown':
+                    return parsed.text || parsed.label;
+                  case 'people':
+                    return parsed.text; // People columns usually have text as display name
+                  case 'date':
+                    return parsed.text || parsed.date;
+                  case 'numbers':
+                  case 'rating':
+                    return parsed.text || parsed.number || parsed.value;
+                  case 'files':
+                  case 'file':
+                    // Handle file columns - return the first file URL if available
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      const firstFile = parsed[0];
+                      return firstFile.url || firstFile.file || firstFile.public_url || null;
+                    }
+                    return null;
+                  default:
+                    return parsed.text || parsed.value || parsed.label;
+                }
+              }
+            } catch (e) {
+              // If not JSON, return as string
+              return String(column.value).trim();
+            }
+          }
+
+          // Priority 3: Fallback to text even if it looks like a header
+          if (column.text && column.text.trim()) {
+            return column.text.trim();
+          }
+
+          return null;
+        };
+
+        const checkFuzzyMatch = (text1, text2) => {
+          // Common variations and synonyms - expanded
+          const variations = {
+            // English variations
+            'position': ['job', 'role', 'title', 'post', 'occupation', 'function', 'designation', 'capacity', 'status'],
+            'department': ['dept', 'division', 'group', 'unit', 'section', 'branch', 'area', 'sector', 'team', 'office'],
+            'manager': ['supervisor', 'boss', 'lead', 'head', 'director', 'superior', 'chief', 'executive', 'coordinator', 'administrator'],
+            'name': ['full name', 'employee name', 'person', 'contact', 'full_name', 'employee_name', 'person_name'],
+            'email': ['e-mail', 'mail', 'contact email', 'email address', 'e_mail', 'email_addr'],
+            'phone': ['telephone', 'mobile', 'cell', 'contact number', 'tel', 'contact_phone', 'phone_number'],
+            'location': ['office', 'address', 'city', 'place', 'site', 'workplace', 'work_location'],
+            'salary': ['pay', 'compensation', 'wage', 'income', 'remuneration', 'pay_rate', 'hourly_rate'],
+
+            // Georgian variations - expanded
+            'პოზიცია': ['თანამდებობა', 'სამუშაო', 'როლი', 'დასახელება', 'ამოცანა', 'წოდება', 'დონე'],
+            'განყოფილება': ['დეპარტამენტი', 'დეპტ', 'დივიზია', 'ჯგუფი', 'სექცია', 'სამსახური', 'გუნდი', 'ფილიალი'],
+            'მენეჯერი': ['ხელმძღვანელი', 'ბოსი', 'უფროსი', 'დირექტორი', 'სუპერვაიზერი', 'ლიდერი', 'გუნდის ლიდერი'],
+            'სახელი': ['სრული სახელი', 'თანამშრომელი', 'პიროვნება', 'სახელწოდება', 'დასახელება'],
+            'ელფოსტა': ['ელექტრონული ფოსტა', 'ელ-ფოსტა', 'მეილი', 'საკონტაქტო ელფოსტა'],
+            'ტელეფონი': ['მობილური', 'საკონტაქტო ნომერი', 'ტელ', 'სამუშაო ტელეფონი'],
+            'მდებარეობა': ['ოფისი', 'მისამართი', 'ქალაქი', 'ადგილი', 'სამუშაო ადგილი'],
+            'ხელფასი': ['ანაზღაურება', 'შემოსავალი', 'ზღვა', 'თვიური ხელფასი']
+          };
+
+          // Check if text1 matches any variation of text2
+          for (const [key, synonyms] of Object.entries(variations)) {
+            if ((text1 === key && synonyms.includes(text2)) ||
+                (text2 === key && synonyms.includes(text1))) {
+              return true;
+            }
+          }
+
+          // Check for partial matches with variations
+          for (const [key, synonyms] of Object.entries(variations)) {
+            if (text1.includes(key)) {
+              if (synonyms.some(syn => text2.includes(syn))) {
+                return true;
+              }
+            }
+            if (text2.includes(key)) {
+              if (synonyms.some(syn => text1.includes(syn))) {
+                return true;
+              }
+            }
+          }
+
+          // Additional fuzzy matching strategies
+          const words1 = text1.split(/\s+/);
+          const words2 = text2.split(/\s+/);
+
+          // Check if significant words overlap
+          const significantWords1 = words1.filter(word => word.length > 2);
+          const significantWords2 = words2.filter(word => word.length > 2);
+
+          const commonWords = significantWords1.filter(word1 =>
+            significantWords2.some(word2 =>
+              word1.includes(word2) || word2.includes(word1) ||
+              (word1.length > 3 && word2.length > 3 &&
+               (word1.substring(0, 3) === word2.substring(0, 3)))
+            )
+          );
+
+          if (commonWords.length > 0) {
+            return true;
+          }
+
+          // Check for common abbreviations
+          const abbreviations = {
+            'pos': 'position',
+            'dept': 'department',
+            'mgr': 'manager',
+            'sup': 'supervisor',
+            'dir': 'director',
+            'coord': 'coordinator',
+            'admin': 'administrator',
+            'rep': 'representative',
+            'spec': 'specialist',
+            'eng': 'engineer',
+            'dev': 'developer'
+          };
+
+          for (const [abbr, full] of Object.entries(abbreviations)) {
+            if ((text1.includes(abbr) && text2.includes(full)) ||
+                (text1.includes(full) && text2.includes(abbr))) {
+              return true;
+            }
+          }
+
+          return false;
+        };
+
+        // Helper function to find column by ID and title (enhanced)
+        const findColumn = (item, possibleIds, possibleTitles, excludeColumns = []) => {
+          // Safety check: ensure item and column_values exist
+          if (!item || !item.column_values || !Array.isArray(item.column_values)) {
+            return null;
+          }
+
+          // const debugEmployees = ['Lazarei', 'Givi', 'Gujia'];
+          // if (debugEmployees.includes(item.name)) {
+          //   console.log(`🔍 findColumn called for ${item.name} with IDs: [${possibleIds.join(', ')}] and titles: [${possibleTitles.slice(0, 3).join(', ')}...]`);
+          // }
+
+          let foundColumn = null;
+
+          for (const col of item.column_values) {
+            if (!col) continue;
+
+            // Skip already used columns
+            if (excludeColumns.some(excluded => excluded.id === col.id)) {
+              // if (debugEmployees.includes(item.name)) {
+              //   console.log(`🔍 Skipping column ${col.id} (already used)`);
+              // }
+              continue;
+            }
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase().trim();
+
+            // Priority 1: Check by ID (exact match) - only for specific, non-generic IDs
+            const specificIds = possibleIds.filter(id => !id.includes('text') && id !== 'numbers' && id !== 'date' && id !== 'status');
+            if (specificIds.some(id => columnId === id.toLowerCase())) {
+              foundColumn = col;
+              break;
+            }
+
+            // Priority 2: Enhanced title/text matching with multiple strategies
+            const matchesTitle = possibleTitles.some(title => {
+              const titleLower = title.toLowerCase();
+              const titleNormalized = normalizeText(titleLower);
+              const columnNormalized = normalizeText(columnText);
+
+              // Strategy 1: Exact match (after normalization)
+              if (columnNormalized === titleNormalized) {
+                return true;
+              }
+
+              // Strategy 2: Contains match (both directions)
+              if (columnNormalized.includes(titleNormalized) || titleNormalized.includes(columnNormalized)) {
+                // Avoid matches that are too short or generic
+                if (titleNormalized.length >= 2 && columnNormalized.length >= 2) {
+                  return true;
+                }
+              }
+
+              // Strategy 3: Word-based matching
+              const titleWords = titleNormalized.split(/\s+/).filter(word => word.length > 1);
+              const columnWords = columnNormalized.split(/\s+/).filter(word => word.length > 1);
+
+              // Check if any significant words match
+              const hasWordMatch = titleWords.some(titleWord =>
+                columnWords.some(columnWord => {
+                  // Exact word match
+                  if (columnWord === titleWord) return true;
+                  // Partial word match (at least 4 characters)
+                  if (titleWord.length >= 4 && columnWord.length >= 4) {
+                    return columnWord.includes(titleWord) || titleWord.includes(columnWord);
+                  }
+                  return false;
+                })
+              );
+
+              if (hasWordMatch) {
+                return true;
+              }
+
+              // Strategy 4: Fuzzy matching for common variations
+              const fuzzyMatches = checkFuzzyMatch(columnNormalized, titleNormalized);
+              if (fuzzyMatches) {
+                return true;
+              }
+
+              return false;
+            });
+
+            if (matchesTitle) {
+              foundColumn = col;
+              break;
+            }
+
+            // Priority 4: Check by ID (contains) - only for meaningful IDs
+            const meaningfulIds = possibleIds.filter(id =>
+              !['text', 'numbers', 'date', 'status'].includes(id) &&
+              !id.match(/^text\d+$/) &&
+              !id.match(/^numbers\d+$/) &&
+              !id.match(/^date\d+$/)
+            );
+            if (meaningfulIds.some(id => columnId.includes(id.toLowerCase()))) {
+              foundColumn = col;
+              break;
+            }
+          }
+
+
+          // if (debugEmployees.includes(item.name) && foundColumn) {
+          //   console.log(`🔍 findColumn returning column ${foundColumn.id} (${foundColumn.text}) for ${item.name}`);
+          // }
+          return foundColumn;
+        };
+
+        // Convert Monday.com items to employees format
+        // First pass: create employees without manager relationships
+        const mondayEmployees = items.map((item, index) => {
+          // Safety check: skip items without column_values
+          if (!item || !item.column_values || !Array.isArray(item.column_values)) {
+            console.warn(`⚠️ Skipping item ${index} - missing column_values`);
+            return null;
+          }
+          // Find all relevant columns - comprehensive search
+          // In Monday.com API: column_values[].text = column header name, column_values[].value = cell value
+          // But sometimes text can also contain the value, so we check both
+          let firstnameColumn = item.column_values.find(col => {
+            if (!col || !col.text) return false;
+            
+            const headerText = (col.text || '').toLowerCase().trim();
+            const columnId = (col.id || '').toLowerCase();
+            
+            // Check by column ID (exact matches)
+            if (
+              columnId === 'firstname' ||
+              columnId === 'first_name' ||
+              columnId === 'first-name' ||
+              columnId === 'firstname' ||
+              columnId === 'first name'
+            ) {
+              return true;
+            }
+            
+            // Check by column ID (contains)
+            if (
+              columnId.includes('firstname') ||
+              columnId.includes('first_name') ||
+              columnId.includes('first-name')
+            ) {
+              return true;
+            }
+            
+            // Check by header text (column name) - exact matches
+            if (
+              headerText === 'first name' ||
+              headerText === 'firstname' ||
+              headerText === 'first-name' ||
+              headerText === 'სახელი' // Georgian: სახელი
+            ) {
+              return true;
+            }
+            
+            // Check by header text (column name) - contains
+            if (
+              headerText.includes('first name') ||
+              headerText.includes('firstname') ||
+              headerText.includes('first-name') ||
+              headerText.includes('სახელი')
+            ) {
+              return true;
+            }
+            
+            // Check if it's a text column and header contains "first"
+            if (col.type === 'text' && headerText.includes('first')) {
+              return true;
+            }
+            
+            return false;
+          });
+          
+          // Fallback: if not found, try to find by checking all text columns
+          // Same approach as Person column - find by type and header text
+          if (!firstnameColumn) {
+            const textColumns = item.column_values.filter(col => col && col.type === 'text');
+            
+            // Try to find First Name in text columns by checking header text
+            firstnameColumn = textColumns.find(col => {
+              const headerText = (col.text || '').toLowerCase().trim();
+              return (
+                headerText === 'first name' ||
+                headerText === 'firstname' ||
+                headerText === 'first-name' ||
+                headerText.includes('first name') ||
+                headerText.includes('firstname') ||
+                headerText === 'სახელი' ||
+                headerText.includes('სახელი')
+              );
+            });
+          }
+          
+          const lastnameColumn = item.column_values.find(col => {
+            if (!col) return false;
+            
+            const headerText = (col.text || '').toLowerCase().trim();
+            const columnId = (col.id || '').toLowerCase();
+            
+            // Check by column ID
+            if (
+              columnId === 'lastname' ||
+              columnId === 'last_name' ||
+              columnId === 'last-name' ||
+              columnId.includes('lastname') ||
+              columnId.includes('last_name')
+            ) {
+              return true;
+            }
+            
+            // Check by header text (column name)
+            if (
+              headerText === 'last name' ||
+              headerText === 'lastname' ||
+              headerText === 'last-name' ||
+              headerText.includes('last name') ||
+              headerText.includes('lastname') ||
+              headerText.includes('last-name') ||
+              headerText === 'გვარი' || // Georgian: გვარი
+              headerText.includes('გვარი')
+            ) {
+              return true;
+            }
+            
+            return false;
+          });
+
+
+          // Track used columns to avoid duplicates
+          const usedColumns = [];
+
+          // First, try to find position column by common patterns in IDs and titles
+          // if (['Lazarei', 'Givi', 'Gujia'].includes(item.name)) {
+          //   console.log('🔍 Starting position column search for item:', item.name);
+          // }
+          // Position column detection - prioritize by type and content
+          let positionColumn = null;
+
+          // Strategy 1: Look for text columns with position-like content
+            const textColumns = item.column_values.filter(col =>
+            (col.type === 'text' || !col.type) &&
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            for (const col of textColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase();
+
+                // Skip email-like values from position detection
+                if (val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val)) {
+                  continue;
+                }
+
+                // Check if the value looks like a position title
+                const positionIndicators = ['ceo', 'cto', 'cfo', 'coo', 'vp', 'director', 'manager', 'supervisor', 'lead', 'head', 'chief', 'executive', 'president', 'officer', 'specialist', 'analyst', 'engineer', 'developer', 'consultant', 'coordinator', 'administrator', 'representative', 'associate', 'senior', 'junior', 'intern'];
+
+                const hasPositionIndicator = positionIndicators.some(indicator => val.includes(indicator));
+
+                // Additional check: must look like a job title
+                const looksLikeJobTitle = val.split(' ').length > 1 || positionIndicators.some(indicator => val.toLowerCase() === indicator);
+
+                if (hasPositionIndicator && looksLikeJobTitle) {
+                  positionColumn = col;
+                  break;
+                }
+              }
+            }
+
+          // Strategy 2: If no text column found, try findColumn with keywords
+          if (!positionColumn) {
+            positionColumn = findColumn(item,
+              ['position', 'role', 'job_title', 'title', 'job'],
+              ['position', 'role', 'job title', 'title', 'job'],
+              usedColumns
+            );
+                  }
+
+
+          // Final comprehensive fallback for position
+          if (!positionColumn) {
+
+            // Analyze all available columns for position-like content
+            const allAvailableColumns = item.column_values.filter(col =>
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            // console.log('🔍 Final fallback: Checking allAvailableColumns for position');
+            for (const col of allAvailableColumns) {
+              const extractedVal = extractColumnValue(col);
+              // console.log('🔍 Final fallback: Column', col.id, 'type:', col.type, 'extracted value:', extractedVal);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase().trim();
+                // console.log('🔍 Final fallback: Processing value:', val);
+
+                // Skip if it looks like an email, phone, or very long text
+                const shouldSkip = val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val) || val.length > 50;
+                // console.log('🔍 Final fallback: Should skip?', shouldSkip, '(email/phone/long text check)');
+                if (shouldSkip) {
+                  continue; // Likely email, phone, or long text
+                }
+
+                // Skip if it looks like a person name (common names or capitalized single words)
+                const commonNames = ['david', 'john', 'mike', 'anna', 'maria', 'alex', 'james', 'lisa', 'paul', 'mark', 'sarah', 'daniel', 'jane', 'peter', 'mary', 'robert', 'linda', 'william', 'patricia', 'richard', 'susan', 'joseph', 'jennifer', 'thomas', 'barbara', 'charles', 'elizabeth', 'christopher', 'jessica', 'matthew', 'nancy', 'anthony', 'donna', 'steven', 'michelle', 'andrew', 'laura', 'joshua', 'amy', 'kevin', 'angela', 'brian', 'helen', 'george', 'sandra', 'timothy', 'donna', 'ronald', 'carol', 'jason', 'ruth', 'edward', 'sharon', 'jacob', 'michelle', 'gary', 'karen', 'nicholas', 'betty', 'eric', 'lisa', 'jonathan', 'kimberly', 'stephen', 'deborah', 'larry', 'dorothy', 'justin', 'helen', 'scott', 'anna', 'brandon', 'melissa', 'benjamin', 'emma', 'samuel', 'olivia', 'gregory', 'jessica', 'frank', 'ashley', 'raymond', 'kathleen', 'alexander', 'martha', 'patrick', 'sandra', 'jack', 'stephanie'];
+                const looksLikeName = val.length > 2 && val.length < 20 && val.split(' ').length === 1 &&
+                                     (commonNames.some(name => val.includes(name)) || /^[A-Z]/.test(val.charAt(0)));
+
+                if (looksLikeName) {
+                  continue; // Likely a person name
+                }
+
+                // If it's a reasonable length and contains position-like words
+                if (val.length > 1 && val.length < 100) {
+                  const positionWords = ['ceo', 'vp', 'manager', 'director', 'lead', 'developer', 'engineer', 'specialist', 'analyst', 'consultant', 'coordinator', 'executive', 'senior', 'junior', 'intern', 'პოზიცია', 'მენეჯერი', 'დირექტორი', 'ლიდერი'];
+                  const departmentWords = ['engineering', 'marketing', 'sales', 'hr', 'finance', 'operations', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'human resources', 'customer success', 'product management', 'quality assurance', 'business development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ფინანსები', 'ოპერაციები'];
+
+                  const hasPositionWord = positionWords.some(word => val.includes(word));
+                  const hasDepartmentWord = departmentWords.some(word => val.includes(word));
+
+                  // console.log('🔍 Final fallback: Has position word?', hasPositionWord, 'Has department word?', hasDepartmentWord, 'Length < 30?', val.length < 30);
+
+                  // Only assign as position if it has position words AND doesn't have department words
+                  // This prevents department names like "Design" from being assigned as positions
+                  if (hasPositionWord && !hasDepartmentWord) {
+                    positionColumn = col;
+                    // console.log('✅ Found position column via final fallback:', col.id);
+                    break;
+                  }
+                  // For very short values without department words, still consider as potential position
+                  else if (!hasDepartmentWord && val.length < 20 && val.split(' ').length <= 2) {
+                    positionColumn = col;
+                    // console.log('✅ Found position column via short value fallback:', col.id);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          if (positionColumn) usedColumns.push(positionColumn);
+          console.log('🎯 Final position column result:', positionColumn ? positionColumn.id : 'NOT FOUND');
+
+          // Debug: Show all columns and their detection status
+          console.log(`🔍 ${item.name} - Column detection summary:`);
+          console.log(`   Position: ${positionColumn ? positionColumn.id : 'NOT FOUND'}`);
+          console.log(`   Used columns: [${usedColumns.map(c => c.id).join(', ')}]`);
+
+          const emailColumn = findColumn(item,
+            // IDs - comprehensive
+            ['email', 'email_address', 'e_mail', 'emailaddress', 'contact_email', 'work_email', 'personal_email', 'mail'],
+            // Titles - comprehensive
+            ['email', 'email address', 'e-mail', 'email address', 'contact email', 'work email', 'personal email', 'mail', 'ელ-ფოსტა', 'ელექტრონული ფოსტა', 'ელფოსტა', 'საკონტაქტო ელფოსტა', 'სამუშაო ელფოსტა', 'პირადი ელფოსტა'],
+            usedColumns
+          );
+          if (emailColumn) usedColumns.push(emailColumn);
+
+          const phoneColumn = findColumn(item,
+            // IDs - comprehensive
+            ['phone', 'mobile', 'telephone', 'cell', 'phone_number', 'mobile_number', 'telephone_number', 'cell_number', 'contact_phone', 'work_phone', 'office_phone', 'home_phone'],
+            // Titles - comprehensive
+            ['phone', 'mobile', 'telephone', 'cell', 'phone number', 'mobile number', 'telephone number', 'cell number', 'contact phone', 'work phone', 'office phone', 'home phone', 'ტელეფონი', 'მობილური', 'ტელ', 'ტელეფონის ნომერი', 'მობილურის ნომერი', 'საკონტაქტო ტელეფონი', 'სამუშაო ტელეფონი', 'ოფისის ტელეფონი'],
+            usedColumns
+          );
+          if (phoneColumn) usedColumns.push(phoneColumn);
+
+          let managerColumn = findColumn(item,
+            // IDs - comprehensive
+            ['manager', 'reports_to', 'supervisor', 'boss', 'lead', 'superior', 'direct_manager', 'reporting_manager', 'manager_name', 'supervisor_name', 'boss_name', 'lead_name', 'reporting_to', 'reports_to_manager', 'line_manager', 'direct_supervisor', 'team_lead', 'project_manager'],
+            // Titles - comprehensive with variations
+            ['manager', 'reports to', 'supervisor', 'boss', 'lead', 'superior', 'direct manager', 'reporting manager', 'line manager', 'direct supervisor', 'team lead', 'project manager', 'reporting to', 'reports to manager', 'manager name', 'supervisor name', 'boss name', 'მენეჯერი', 'ხელმძღვანელი', 'ბოსი', 'უფროსი', 'დირექტორი', 'სუპერვაიზერი', 'ლიდერი', 'გუნდის ლიდერი', 'პროექტის მენეჯერი', 'ხელმძღვანელის სახელი'],
+            usedColumns
+          );
+
+          // If not found, try to find any text/people column that might contain manager data
+          if (!managerColumn) {
+            managerColumn = item.column_values.find(col => {
+              if (!col || usedColumns.some(excluded => excluded.id === col.id)) return false;
+
+              const colText = (col.text || '').toLowerCase();
+              const colId = (col.id || '').toLowerCase();
+
+              // Look for text/people columns with manager-related keywords
+              if (col.type === 'text' || col.type === 'people' || !col.type) {
+                const managerKeywords = ['manag', 'superv', 'boss', 'lead', 'report', 'მენეჯ', 'ხელმძ', 'უფროს', 'ბოს', 'ლიდერ'];
+                return managerKeywords.some(keyword =>
+                  colId.includes(keyword) || colText.includes(keyword)
+                );
+              }
+              return false;
+            });
+
+            if (managerColumn) {
+            }
+          }
+
+          // Ultimate fallback: if still not found, look for any text/people column that might be manager
+          if (!managerColumn) {
+            // For now, just look for columns with manager-related content patterns
+            const candidateColumns = item.column_values.filter(col =>
+              (col.type === 'text' || col.type === 'people' || !col.type) &&
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            for (const col of candidateColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal && extractedVal.trim()) {
+                const val = extractedVal.toLowerCase();
+                // Look for patterns that suggest this might be a manager name
+                // (We'll validate this in the second pass)
+                const managerPatterns = ['manager', 'director', 'lead', 'supervisor', 'boss', 'head', 'chief', 'მენეჯერი', 'ხელმძღვანელი', 'დირექტორი', 'უფროსი', 'ბოსი'];
+
+                if (managerPatterns.some(pattern => val.includes(pattern)) ||
+                    val.length > 3) { // Any reasonable-length text could be a manager name
+                  managerColumn = col;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (managerColumn) usedColumns.push(managerColumn);
+
+          // Extract additional common columns
+          let departmentColumn = null;
+
+          // Strategy 1: Look for dropdown columns with department-like content
+          const deptDropdownColumns = item.column_values.filter(col =>
+            col.type === 'dropdown' &&
+            !usedColumns.some(excluded => excluded.id === col.id)
+          );
+
+          for (const col of deptDropdownColumns) {
+            const extractedVal = extractColumnValue(col);
+            if (extractedVal) {
+              const val = extractedVal.toLowerCase();
+              // Check if the value looks like a department name
+              const deptIndicators = ['engineering', 'marketing', 'sales', 'hr', 'finance', 'operations', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'management', 'human resources', 'customer success', 'product management', 'quality assurance', 'business development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ადამიანური', 'რესურსები', 'ფინანსები', 'ოპერაციები', 'დიზაინი', 'პროდუქტი', 'მხარდაჭერა'];
+
+              if (deptIndicators.some(indicator => val.includes(indicator))) {
+                departmentColumn = col;
+                break;
+              }
+            }
+          }
+
+          // Strategy 2: If no dropdown column found, try findColumn with keywords
+          if (!departmentColumn) {
+            departmentColumn = findColumn(item,
+              ['department', 'dept', 'division', 'group'],
+              ['department', 'dept', 'division', 'group'],
+              usedColumns
+            );
+          }
+
+          // Ultimate fallback: if still not found, look for any text/dropdown column that might be department
+          if (!departmentColumn) {
+            const candidateColumns = item.column_values.filter(col =>
+              (col.type === 'text' || col.type === 'dropdown' || !col.type) &&
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            // Strategy 1: Look for common department values in the column data
+            for (const col of candidateColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase();
+
+                // Skip email-like, phone-like, or very long values
+                if (val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val) || val.length > 50) {
+                  continue;
+                }
+
+                // Check if the value looks like a department name
+                const deptIndicators = ['engineering', 'marketing', 'sales', 'hr', 'finance', 'operations', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'management', 'human resources', 'customer success', 'product management', 'quality assurance', 'business development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ადამიანური', 'რესურსები', 'ფინანსები', 'ოპერაციები', 'დიზაინი', 'პროდუქტი', 'მხარდაჭერა'];
+
+                // Exclude position-like words
+                const positionWords = ['ceo', 'vp', 'manager', 'director', 'lead', 'developer', 'engineer', 'specialist', 'analyst', 'consultant', 'coordinator', 'executive', 'senior', 'junior', 'intern', 'პოზიცია', 'მენეჯერი', 'დირექტორი', 'ლიდერი'];
+
+                const hasDeptWord = deptIndicators.some(indicator => val.includes(indicator));
+                const hasPositionWord = positionWords.some(word => val.includes(word));
+
+                // Don't assign as department if it has position words or looks like a name
+                const looksLikeName = val.length > 3 && val.length < 20 && /^[A-Z][a-z]+$/.test(val.charAt(0).toUpperCase() + val.slice(1)) && val.split(' ').length === 1;
+
+                if (hasDeptWord && !hasPositionWord && !looksLikeName) {
+                  departmentColumn = col;
+                  break;
+                }
+              }
+            }
+
+            // Strategy 2: Position-based guessing - department is often after position
+            if (!departmentColumn && candidateColumns.length >= 4) {
+              // Department might be the 4th, 5th, or 6th column
+              const likelyPositions = [3, 4, 5]; // 0-indexed
+              for (const pos of likelyPositions) {
+                if (pos < candidateColumns.length) {
+                  const candidateCol = candidateColumns[pos];
+                  const extractedVal = extractColumnValue(candidateCol);
+                  if (extractedVal && extractedVal.length > 0 && extractedVal.length < 100) {
+                    departmentColumn = candidateCol;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Final comprehensive fallback for department
+          if (!departmentColumn) {
+
+            const allAvailableColumns = item.column_values.filter(col =>
+              !usedColumns.some(excluded => excluded.id === col.id)
+            );
+
+            for (const col of allAvailableColumns) {
+              const extractedVal = extractColumnValue(col);
+              if (extractedVal) {
+                const val = extractedVal.toLowerCase().trim();
+
+                // Skip if it looks like an email, phone, or very long text
+                if (val.includes('@') || /^\+?[\d\s\-\(\)]+$/.test(val) || val.length > 50) {
+                  continue;
+                }
+
+                // Check for department-like content
+                if (val.length > 1 && val.length < 50) {
+                  const deptWords = ['engineering', 'marketing', 'sales', 'finance', 'operations', 'hr', 'human', 'resources', 'it', 'tech', 'design', 'product', 'support', 'admin', 'legal', 'research', 'quality', 'customer', 'business', 'development', 'განყოფილება', 'დეპარტამენტი', 'ტექნოლოგიები', 'მარკეტინგი', 'გაყიდვები', 'ფინანსები', 'ოპერაციები'];
+                  const positionWords = ['ceo', 'vp', 'manager', 'director', 'lead', 'developer', 'engineer', 'specialist', 'analyst', 'consultant', 'coordinator', 'executive', 'senior', 'junior', 'intern', 'პოზიცია', 'მენეჯერი', 'დირექტორი', 'ლიდერი'];
+
+                  const hasDeptWord = deptWords.some(word => val.includes(word));
+                  const hasPositionWord = positionWords.some(word => val.includes(word));
+
+                  // Additional check: exclude values that look like names (capitalized single words or common names)
+                  const looksLikeName = val.length > 2 && val.length < 20 && val.split(' ').length === 1 &&
+                                       /^[A-Z]/.test(val.charAt(0)) && !hasDeptWord;
+
+                  // Only assign as department if it has department words AND doesn't have position words AND doesn't look like a name
+                  if (hasDeptWord && !hasPositionWord && !looksLikeName) {
+                    departmentColumn = col;
+                    // console.log('✅ Found department column via final fallback:', col.id);
+                    break;
+                  }
+                  // For single words that look like department names (but not positions or names)
+                  if (!hasPositionWord && val.length > 3 && val.length < 30 && !val.includes(' ') && !looksLikeName) {
+                    // Additional check: avoid common name-like words
+                    const commonNames = ['david', 'john', 'mike', 'anna', 'maria', 'alex', 'james', 'lisa', 'paul', 'mark', 'sarah', 'daniel', 'jane', 'peter', 'mary', 'robert', 'linda', 'william', 'patricia', 'richard', 'susan', 'joseph', 'jennifer', 'thomas', 'barbara', 'charles', 'elizabeth', 'christopher', 'jessica', 'matthew', 'nancy', 'anthony', 'donna', 'steven', 'michelle', 'andrew', 'laura', 'joshua', 'amy', 'kevin', 'angela', 'brian', 'helen', 'george', 'sandra', 'timothy', 'donna', 'ronald', 'carol', 'jason', 'ruth', 'edward', 'sharon', 'jacob', 'michelle', 'gary', 'karen', 'nicholas', 'betty', 'eric', 'lisa', 'jonathan', 'kimberly', 'stephen', 'deborah', 'larry', 'dorothy', 'justin', 'helen', 'scott', 'anna', 'brandon', 'melissa', 'benjamin', 'emma', 'samuel', 'olivia', 'gregory', 'jessica', 'frank', 'ashley', 'raymond', 'kathleen', 'alexander', 'martha', 'patrick', 'sandra', 'jack', 'stephanie'];
+                    if (!commonNames.some(name => val.toLowerCase().includes(name.toLowerCase()))) {
+                      departmentColumn = col;
+                      // console.log('✅ Found department column via single word fallback:', col.id);
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          if (departmentColumn) usedColumns.push(departmentColumn);
+          console.log(`   Department: ${departmentColumn ? departmentColumn.id : 'NOT FOUND'}`);
+          console.log(`   Used columns after dept: [${usedColumns.map(c => c.id).join(', ')}]`);
+          // Log column assignments for debugging
+          console.log(`📊 ${item.name} Column assignments:`, {
+            position: positionColumn?.id,
+            department: departmentColumn?.id,
+            usedColumns: usedColumns.map(col => col.id)
+          });
+
+          const locationColumn = findColumn(item,
+            // IDs
+            ['location', 'office', 'city', 'address', 'place'],
+            // Titles
+            ['location', 'office', 'city', 'address', 'place', 'მდებარეობა', 'ოფისი', 'ქალაქი', 'ადგილი'],
+            usedColumns
+          );
+          if (locationColumn) usedColumns.push(locationColumn);
+
+          const startDateColumn = findColumn(item,
+            // IDs
+            ['start_date', 'hire_date', 'joined_date', 'employment_date', 'join_date'],
+            // Titles
+            ['start date', 'hire date', 'joined date', 'employment date', 'join date', 'დაწყების თარიღი', 'დასაქმების თარიღი', 'თარიღი'],
+            usedColumns
+          );
+          if (startDateColumn) usedColumns.push(startDateColumn);
+
+          const salaryColumn = findColumn(item,
+            // IDs
+            ['salary', 'compensation', 'pay', 'wage', 'income'],
+            // Titles
+            ['salary', 'compensation', 'pay', 'wage', 'income', 'ხელფასი', 'ანაზღაურება'],
+            usedColumns
+          );
+          if (salaryColumn) usedColumns.push(salaryColumn);
+
+          const addressColumn = findColumn(item,
+            // IDs
+            ['address', 'home_address', 'street_address'],
+            // Titles
+            ['address', 'home address', 'street address', 'მისამართი', 'სახლი'],
+            usedColumns
+          );
+          if (addressColumn) usedColumns.push(addressColumn);
+
+          const notesColumn = findColumn(item,
+            // IDs
+            ['notes', 'comments', 'description', 'remarks', 'additional_info'],
+            // Titles
+            ['notes', 'comments', 'description', 'remarks', 'additional info', 'შენიშვნები', 'კომენტარები', 'აღწერა'],
+            usedColumns
+          );
+          if (notesColumn) usedColumns.push(notesColumn);
+
+          // Extract numeric columns - enhanced search by ID and title
+          const numberColumns = item.column_values.filter(col => {
+            if (!col) return false;
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase();
+
+            // Check by type
+            if (col.type === 'numbers' || col.type === 'rating' || col.type === 'progress') {
+              return true;
+            }
+
+            // Check by ID
+            const numericIds = ['salary', 'compensation', 'pay', 'wage', 'income', 'experience', 'years', 'age', 'rating', 'score', 'numbers', 'numbers0', 'numbers1', 'numbers2', 'numbers3'];
+            if (numericIds.some(id => columnId.includes(id))) {
+              return true;
+            }
+
+            // Check by title
+            const numericTitles = ['salary', 'pay', 'compensation', 'experience', 'years', 'age', 'rating', 'score', 'ხელფასი', 'გამოცდილება', 'წლები', 'ასაკი', 'რეიტინგი'];
+            return numericTitles.some(title => columnText.includes(title));
+          });
+
+          // Extract date columns - enhanced search by ID and title
+          const dateColumns = item.column_values.filter(col => {
+            if (!col) return false;
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase();
+
+            // Check by type
+            if (col.type === 'date') {
+              return true;
+            }
+
+            // Check by ID
+            const dateIds = ['start_date', 'hire_date', 'joined_date', 'employment_date', 'join_date', 'birth_date', 'birthday', 'date', 'date0', 'date1', 'date2', 'date3', 'date4'];
+            if (dateIds.some(id => columnId.includes(id))) {
+              return true;
+            }
+
+            // Check by title
+            const dateTitles = ['date', 'start', 'hire', 'join', 'birth', 'birthday', 'თარიღი', 'დაბადების', 'დაწყება', 'დასაქმება'];
+            return dateTitles.some(title => columnText.includes(title));
+          });
+
+          // Extract dropdown/status columns - enhanced search by ID and title
+          const dropdownColumns = item.column_values.filter(col => {
+            if (!col) return false;
+
+            const columnId = (col.id || '').toLowerCase();
+            const columnText = (col.text || '').toLowerCase();
+
+            // Skip columns we've already handled
+            if (columnId === 'position' || columnId === 'department' || (columnId.includes('text') && ['პოზიცია', 'განყოფილება'].some(title => columnText.includes(title)))) return false;
+
+            // Check by type
+            if (col.type === 'dropdown' || col.type === 'status') {
+              return true;
+            }
+
+            // Check by ID
+            const statusIds = ['status', 'state', 'type', 'category', 'level', 'priority', 'employment_type', 'contract_type', 'status0', 'status1', 'status2'];
+            if (statusIds.some(id => columnId.includes(id))) {
+              return true;
+            }
+
+            // Check by title
+            const statusTitles = ['status', 'state', 'type', 'category', 'level', 'priority', 'სტატუსი', 'ტიპი', 'კატეგორია', 'დონე', 'ხელშეკრულება'];
+            return statusTitles.some(title => columnText.includes(title));
+          });
+          
+          // Find Status column (type === 'status')
+          const statusColumn = item.column_values.find(col => col.type === 'status');
+          let statusValue = null;
+          if (statusColumn) {
+            // Status column-ის text field-ში არის status-ის მნიშვნელობა (მაგ: "Done", "Working on it")
+            if (statusColumn.text && statusColumn.text.trim()) {
+              statusValue = statusColumn.text.trim();
+            }
+            // Fallback: value field-იდან JSON parse
+            else if (statusColumn.value) {
+              try {
+                const parsed = JSON.parse(statusColumn.value);
+                statusValue = parsed.text || statusColumn.value;
+              } catch (e) {
+                statusValue = statusColumn.value;
+              }
+            }
+          }
+
+          // Find person type columns (these contain user information)
+          const personColumns = item.column_values.filter(col => col.type === 'people');
+          let personData = null;
+          let personNameFromText = null; // Person column-ის text field-იდან სახელი
+
+          if (personColumns.length > 0) {
+            const personColumn = personColumns[0];
+            
+            // პირველი პრიორიტეტი: Person column-ის text field-ში არის რეალური სახელი
+            if (personColumn.text && personColumn.text.trim()) {
+              personNameFromText = personColumn.text.trim();
+            }
+            
+            // მეორე პრიორიტეტი: value field-იდან JSON parse
+            try {
+              // Person columns have JSON data in the value field
+              const personValue = JSON.parse(personColumn.value || '{}');
+              if (personValue.personsAndTeams && personValue.personsAndTeams.length > 0) {
+                personData = personValue.personsAndTeams[0];
+              }
+              } catch (e) {
+                // Error parsing person data
+              }
+          }
+
+          // Build full name - prioritize Item name (monday.com item title), then Person column, then other columns
+          let fullName = item.name; // Primary source: Item name (monday.com item title)
+
+          // Extract value from First Name column
+          // Same logic as Person column: first check text field, then value field
+          let firstNameValue = null;
+          if (firstnameColumn) {
+            // პირველი პრიორიტეტი: First Name column-ის text field-ში შეიძლება იყოს რეალური მნიშვნელობა
+            // (როგორც Person column-ში text field შეიცავს person-ის სახელს)
+            const textValue = firstnameColumn.text || '';
+            const textLower = textValue.toLowerCase().trim();
+
+            // Check if text field contains actual value (not column header name)
+            if (
+              textValue.trim() &&
+              textLower !== 'first name' &&
+              textLower !== 'firstname' &&
+              textLower !== 'first-name' &&
+              textLower !== 'სახელი' &&
+              !textLower.includes('first name') &&
+              !textLower.includes('firstname')
+            ) {
+              firstNameValue = textValue.trim();
+            }
+
+            // მეორე პრიორიტეტი: value field-იდან (JSON ან plain text)
+            if (!firstNameValue || !firstNameValue.trim()) {
+              if (firstnameColumn.value) {
+                try {
+                  const parsed = JSON.parse(firstnameColumn.value);
+                  // Try different possible JSON structures
+                  firstNameValue = parsed.text || parsed.value || parsed.name || firstnameColumn.value;
+                } catch (e) {
+                  // If not JSON, use value directly as string
+                  firstNameValue = firstnameColumn.value;
+                }
+              }
+            }
+
+            // Clean up the value
+            if (firstNameValue) {
+              firstNameValue = String(firstNameValue).trim();
+            }
+          }
+
+          let lastNameValue = null;
+          if (lastnameColumn) {
+            if (lastnameColumn.value) {
+              try {
+                const parsed = JSON.parse(lastnameColumn.value);
+                lastNameValue = parsed.text || parsed.value || parsed.name || lastnameColumn.value;
+              } catch (e) {
+                lastNameValue = lastnameColumn.value;
+              }
+            }
+
+            if (!lastNameValue || !lastNameValue.trim()) {
+              const textValue = lastnameColumn.text || '';
+              const textLower = textValue.toLowerCase().trim();
+              if (
+                textValue.trim() &&
+                textLower !== 'last name' &&
+                textLower !== 'lastname' &&
+                textLower !== 'last-name' &&
+                textLower !== 'გვარი' &&
+                !textLower.includes('last name')
+              ) {
+                lastNameValue = textValue.trim();
+              }
+            }
+
+            if (lastNameValue) {
+              lastNameValue = String(lastNameValue).trim();
+            }
+          }
+
+          // Priority order: Item name (primary) > Person column text > First Name column > Person data
+
+          // Primary: Item name (monday.com item title) - this is what user wants
+          if (item.name && item.name.trim()) {
+            fullName = item.name.trim();
+          }
+          // Fallback 1: Person column text field (contains real person name)
+          else if (personNameFromText && personNameFromText.trim()) {
+            fullName = personNameFromText.trim();
+          }
+          // Fallback 2: First Name column (what user wants)
+          else if (firstNameValue && firstNameValue.trim()) {
+            const firstName = firstNameValue.trim();
+            const lastName = lastNameValue ? lastNameValue.trim() : '';
+            fullName = lastName ? `${firstName} ${lastName}` : firstName;
+          }
+          // Fallback 3: Person data from Person column value (JSON)
+          else if (personData && personData.first_name) {
+            const firstName = personData.first_name;
+            const lastName = personData.last_name || '';
+            fullName = `${firstName} ${lastName}`.trim();
+          }
+
+          // Generate manager ID from manager column if available
+          // We'll set this in the second pass after all employees are created
+          let managerId = null;
+
+          // Extract position - prioritize positionColumn, then statusColumn, then default
+          let positionValue = 'Employee';
+          const extractedPosition = positionColumn ? extractColumnValue(positionColumn) : null;
+          // Debug: log position detection
+          // if (['Lazarei', 'Givi', 'Gujia'].includes(item.name)) {
+          //   console.log(`🎯 ${item.name} Position detection:`, { positionColumn: positionColumn?.id, extractedPosition, statusValue, positionValue });
+          // }
+          if (extractedPosition) {
+            positionValue = extractedPosition;
+          } else if (statusValue) {
+            // Use Status column value as position (e.g., "Done", "Working on it", "Stuck")
+            positionValue = statusValue;
+          }
+
+
+          // Extract values from additional columns
+          const departmentValue = departmentColumn ? extractColumnValue(departmentColumn) || 'General' : 'General';
+          const locationValue = locationColumn ? extractColumnValue(locationColumn) : null;
+          const startDateValue = startDateColumn ? extractColumnValue(startDateColumn) : null;
+          const salaryValue = salaryColumn ? extractColumnValue(salaryColumn) : null;
+          const addressValue = addressColumn ? extractColumnValue(addressColumn) : null;
+          const notesValue = notesColumn ? extractColumnValue(notesColumn) : null;
+
+
+          // Extract numeric values
+          const numericValues = {};
+          numberColumns.forEach(col => {
+            if (col.text && col.text.trim()) {
+              // Try to determine field name from column ID or text
+              let fieldName = col.id;
+              if (!fieldName || fieldName === 'numbers') {
+                fieldName = col.text.toLowerCase().replace(/[^a-z0-9]/g, '_');
+              }
+              numericValues[fieldName] = col.text.trim();
+            }
+          });
+
+          // Extract date values
+          const dateValues = {};
+          dateColumns.forEach(col => {
+            if (col.text && col.text.trim()) {
+              let fieldName = col.id;
+              if (!fieldName || fieldName === 'date') {
+                fieldName = col.text.toLowerCase().replace(/[^a-z0-9]/g, '_');
+              }
+              dateValues[fieldName] = col.text.trim();
+            }
+          });
+
+          // Extract dropdown/status values
+          const dropdownValues = {};
+          dropdownColumns.forEach(col => {
+            if (col.text && col.text.trim() && col.id !== 'position') { // Skip position as it's handled separately
+              let fieldName = col.id;
+              if (!fieldName || ['dropdown', 'status'].includes(fieldName)) {
+                fieldName = col.text.toLowerCase().replace(/[^a-z0-9]/g, '_');
+              }
+              dropdownValues[fieldName] = col.text.trim();
+            }
+          });
+
+          // Extract file columns for images
+          let imageUrl = null;
+          const fileColumns = item.column_values.filter(col => col.type === 'file' || col.type === 'files');
+          if (fileColumns.length > 0) {
+            // Use the first file column found, or look for one with "image", "photo", "avatar" in the ID/text
+            let imageColumn = fileColumns.find(col =>
+              (col.id && (col.id.includes('image') || col.id.includes('photo') || col.id.includes('avatar'))) ||
+              (col.text && (col.text.toLowerCase().includes('image') || col.text.toLowerCase().includes('photo') || col.text.toLowerCase().includes('avatar')))
+            );
+
+            // If no specific image column found, use the first file column
+            if (!imageColumn && fileColumns.length > 0) {
+              imageColumn = fileColumns[0];
+            }
+
+            if (imageColumn) {
+              imageUrl = extractColumnValue(imageColumn);
+            }
+          }
+
+          const employeeData = {
+            id: parseInt(item.id),
+            name: fullName,
+            position: positionValue,
+            department: departmentValue,
+            email: personData?.email || (emailColumn ? extractColumnValue(emailColumn) : null) || `${fullName.toLowerCase().replace(' ', '.')}@company.com`,
+            phone: phoneColumn ? extractColumnValue(phoneColumn) : `+1-555-${String(100 + index).padStart(3, '0')}-${String(1000 + index).padStart(4, '0')}`,
+            managerId: managerId,
+            image: imageUrl || personData?.photo_original || personData?.photo_small || null,
+            // Additional fields from monday.com
+            location: locationValue,
+            startDate: startDateValue,
+            salary: salaryValue,
+            address: addressValue,
+            notes: notesValue,
+            // Store dynamic fields
+            ...numericValues,
+            ...dateValues,
+            ...dropdownValues,
+            // Store whether we have a valid name from any source
+            hasValidName: !!fullName && fullName.trim().length > 0
+          };
+
+
+          return employeeData;
+        })
+        // Filter out null items (items without column_values) and items that don't have valid names
+        .filter(emp => {
+          return emp !== null && emp.hasValidName;
+        });
+
+        // Second pass: set manager relationships
+        // We need to match employees back to their original items
+        mondayEmployees.forEach((employee) => {
+          // Find the corresponding item by matching the employee ID
+          const correspondingItem = items.find(item => parseInt(item.id) === employee.id);
+
+          if (correspondingItem) {
+
+            // First try standard manager column detection
+            let managerColumn = findColumn(correspondingItem,
+              // IDs
+              ['manager', 'reports_to', 'supervisor', 'boss', 'lead'],
+              // Titles
+              ['manager', 'reports to', 'supervisor', 'boss', 'lead', 'მენეჯერი', 'ხელმძღვანელი', 'ბოსი'],
+              ['text_mkz2n97z'] // Exclude the position column from manager detection
+            );
+
+
+            // If findColumn found the position column (which can happen due to keywords like "manager" in position titles), ignore it
+            if (managerColumn && managerColumn.id === 'text_mkz2n97z') {
+              console.log(`⚠️ Ignoring position column as manager for ${employee.name}`);
+              managerColumn = null;
+            }
+
+            // If not found, look for dropdown/people columns that contain employee names
+            if (!managerColumn) {
+              const employeeNames = mondayEmployees.map(emp => emp.name.toLowerCase().trim());
+
+              // Look for dropdown or people columns
+              const potentialManagerColumns = correspondingItem.column_values.filter(col =>
+                (col.type === 'dropdown' || col.type === 'people') &&
+                col.id !== 'text_mkz2n97z' // Exclude the position column
+              );
+
+              // console.log(`🔍 Looking for manager column among: ${potentialManagerColumns.map(col => col.id).join(', ')}`);
+
+              for (const col of potentialManagerColumns) {
+                const value = extractColumnValue(col);
+                if (value) {
+                  const valueLower = value.toLowerCase().trim();
+                  // console.log(`🔍 Checking column ${col.id} value: "${value}"`);
+
+                  // Check if this value matches any employee name
+                  const matchingEmployee = employeeNames.find(name =>
+                    name === valueLower ||
+                    name.includes(valueLower) ||
+                    valueLower.includes(name)
+                  );
+
+                  if (matchingEmployee) {
+                    managerColumn = col;
+                    console.log(`✅ Found manager column by employee name match: ${col.id} (value: "${value}")`);
+                    break;
+                  }
+                }
+              }
+            }
+
+            const managerValue = managerColumn ? extractColumnValue(managerColumn) : null;
+            console.log(`👔 Manager detection for ${employee.name}: managerColumn=${managerColumn?.id}, managerValue=${managerValue}`);
+            if (managerValue) {
+              const managerText = managerValue.trim();
+
+              // Enhanced manager finding logic
+              let manager = null;
+
+              // Function to normalize names for comparison
+              const normalizeName = (name) => {
+                return name.toLowerCase()
+                  .replace(/[^\w\s]/g, '') // Remove punctuation
+                  .replace(/\s+/g, ' ') // Normalize spaces
+                  .trim();
+              };
+
+              const normalizedManagerText = normalizeName(managerText);
+
+              // console.log(`🔍 Looking for manager "${managerText}" (${normalizedManagerText}) for employee ${employee.name}`);
+              // console.log(`📋 Available managers: ${mondayEmployees.map(emp => emp.name).join(', ')}`);
+
+              // Priority 1: Exact name match
+              manager = mondayEmployees.find(emp => emp.name === managerText);
+              // if (manager) console.log(`✅ Found exact match: ${manager.name}`);
+
+              // Priority 2: Case-insensitive exact match
+              if (!manager) {
+                manager = mondayEmployees.find(emp => emp.name.toLowerCase() === managerText.toLowerCase());
+                // if (manager) console.log(`✅ Found case-insensitive match: ${manager.name}`);
+              }
+
+              // Priority 3: Normalized name match
+              if (!manager) {
+                manager = mondayEmployees.find(emp => normalizeName(emp.name) === normalizedManagerText);
+                // if (manager) console.log(`✅ Found normalized match: ${manager.name}`);
+              }
+
+              // Priority 4: Partial name match (if manager text is part of employee name or vice versa)
+              if (!manager) {
+                manager = mondayEmployees.find(emp => {
+                  const empNormalized = normalizeName(emp.name);
+                  return empNormalized.includes(normalizedManagerText) ||
+                         normalizedManagerText.includes(empNormalized);
+                });
+              }
+
+              // Priority 5: First name match (if manager text contains first name)
+              if (!manager) {
+                const managerWords = normalizedManagerText.split(' ');
+                manager = mondayEmployees.find(emp => {
+                  const empWords = normalizeName(emp.name).split(' ');
+                  return managerWords.some(word => empWords.includes(word) && word.length > 2);
+                });
+              }
+
+              if (manager) {
+                employee.managerId = manager.id;
+                // console.log(`✅ Set manager for ${employee.name}: ${manager.name} (ID: ${manager.id})`);
+              } else {
+                // console.log(`❌ No manager found for ${employee.name} with manager text: "${managerText}"`);
+                // If manager not found, try to find a reasonable default
+                // Look for employees with "CEO", "Director", "Manager" in their position
+                const possibleManagers = mondayEmployees.filter(emp =>
+                  emp.position && (
+                    emp.position.toLowerCase().includes('ceo') ||
+                    emp.position.toLowerCase().includes('director') ||
+                    emp.position.toLowerCase().includes('manager') ||
+                    emp.position.toLowerCase().includes('head')
+                  )
+                );
+
+                if (possibleManagers.length > 0) {
+                  employee.managerId = possibleManagers[0].id;
+                } else {
+                  // Last resort: assign to first employee
+                  employee.managerId = mondayEmployees[0]?.id || null;
+                }
+              }
+            } else {
+              // No manager column data - use position-based hierarchy
+              // Employees with "CEO", "Director" etc. are at top level
+              const position = employee.position || '';
+              const isTopLevel = position.toLowerCase().includes('ceo') ||
+                               position.toLowerCase().includes('director') ||
+                               position.toLowerCase().includes('president') ||
+                               position.toLowerCase().includes('founder');
+
+              if (isTopLevel) {
+                employee.managerId = null; // Top level
+              } else {
+                // Find a suitable manager based on position hierarchy
+                const managerCandidates = mondayEmployees.filter(emp =>
+                  emp.position && (
+                    emp.position.toLowerCase().includes('manager') ||
+                    emp.position.toLowerCase().includes('director') ||
+                    emp.position.toLowerCase().includes('supervisor') ||
+                    emp.position.toLowerCase().includes('lead') ||
+                    emp.position.toLowerCase().includes('head')
+                  ) && emp.id !== employee.id
+                );
+
+                if (managerCandidates.length > 0) {
+                  employee.managerId = managerCandidates[0].id;
+                } else {
+                  employee.managerId = mondayEmployees[0]?.id || null;
+                }
+              }
+            }
+          }
+
+          // Log manager assignment result
+        });
+
+        // Validate and fix hierarchy
+        const validateHierarchy = (employees) => {
+          const employeeMap = new Map(employees.map(emp => [emp.id, emp]));
+          const processed = new Set();
+          const hierarchyErrors = [];
+
+          // Function to check for circular references
+          const checkCircular = (empId, visited = new Set()) => {
+            if (visited.has(empId)) {
+              hierarchyErrors.push(`Circular reference detected for employee ${empId}`);
+              return true;
+            }
+            if (processed.has(empId)) return false;
+
+            visited.add(empId);
+            const emp = employeeMap.get(empId);
+            if (emp && emp.managerId) {
+              return checkCircular(emp.managerId, visited);
+            }
+            visited.delete(empId);
+            processed.add(empId);
+            return false;
+          };
+
+          // Check each employee for circular references
+          employees.forEach(emp => {
+            if (!processed.has(emp.id)) {
+              checkCircular(emp.id);
+            }
+          });
+
+          // Fix hierarchy issues
+          employees.forEach(emp => {
+            // Ensure no employee reports to themselves
+            if (emp.managerId === emp.id) {
+              emp.managerId = null;
+              hierarchyErrors.push(`Fixed self-reference for ${emp.name}`);
+            }
+
+            // Ensure manager exists
+            if (emp.managerId && !employeeMap.has(emp.managerId)) {
+              emp.managerId = null;
+              hierarchyErrors.push(`Fixed invalid manager reference for ${emp.name}`);
+            }
+          });
+
+          if (hierarchyErrors.length > 0) {
+            console.warn('⚠️ Hierarchy validation issues found:', hierarchyErrors);
+          }
+
+          return employees;
+        };
+
+        // Validate hierarchy and fix issues
+        const validatedEmployees = validateHierarchy(mondayEmployees);
+
+        // Only set employees if we have data from Monday.com
+        if (validatedEmployees.length > 0) {
+          console.log('✅ Monday.com-დან დამუშავებული თანამშრომლები:', validatedEmployees.map(emp => ({
+            id: emp.id,
+            name: emp.name,
+            position: emp.position,
+            department: emp.department,
+            managerId: emp.managerId,
+            email: emp.email,
+            phone: emp.phone
+          })));
+
+          // Debug column assignments for all employees
+          console.log('🔍 Column assignments summary:');
+          validatedEmployees.forEach(emp => {
+            const originalItem = items.find(item => parseInt(item.id) === emp.id);
+            if (originalItem) {
+              const positionCol = originalItem.column_values.find(col => col.id === 'text_mkz2n97z');
+              const managerCol = originalItem.column_values.find(col => col.id === 'dropdown_mkz225fw');
+              const deptCol = originalItem.column_values.find(col => col.id === 'dropdown_mkzdks5f');
+
+              console.log(`${emp.name}: Position="${emp.position}" (from ${positionCol ? positionCol.text : 'unknown'}), Department="${emp.department}" (from ${deptCol ? deptCol.text : 'unknown'}), ManagerId=${emp.managerId} (from ${managerCol ? managerCol.text : 'unknown'})`);
+            }
+          });
+
+          // Debug specific employees
+          const debugEmployees = validatedEmployees.filter(emp => ['Lazarei', 'Givi'].includes(emp.name));
+          if (debugEmployees.length > 0) {
+            console.log('🔍 Debug employees final data:', debugEmployees.map(emp => ({
+              name: emp.name,
+              position: emp.position,
+              department: emp.department,
+              managerId: emp.managerId
+            })));
+          }
+
+          // Log final processed employee data for verification
+          console.log('📋 Final processed employee data:');
+          validatedEmployees.forEach(emp => {
+            console.log(`  ${emp.name}: Position="${emp.position}", Department="${emp.department}", ManagerId=${emp.managerId}, Email="${emp.email}"`);
+          });
+
+          // Log hierarchy for debugging
+          console.log('🏗️ Hierarchy check:');
+          validatedEmployees.forEach(emp => {
+            const manager = validatedEmployees.find(m => m.id === emp.managerId);
+            console.log(`  ${emp.name} (ID: ${emp.id}) -> Manager: ${manager ? manager.name : 'None'} (ID: ${emp.managerId || 'null'})`);
+          });
+
+          setEmployees(validatedEmployees);
+          setMondayDataLoaded(true); // Trigger automatic organization after Monday.com data is loaded
+          localStorage.setItem('employees', JSON.stringify(validatedEmployees));
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error loading employees from Monday.com board:', error);
+      console.error('❌ Error type:', error.constructor.name);
+
+      // Log more detailed error info
+      if (error.message) {
+        console.error('❌ Error message:', error.message);
+      }
+      if (error.graphQLErrors) {
+        console.error('❌ GraphQL errors:', error.graphQLErrors);
+      }
+      if (error.networkError) {
+        console.error('❌ Network error:', error.networkError);
+      }
+
+      // Check if it's a permissions issue
+      if (error.message && error.message.includes('Insufficient permissions')) {
+        console.error('🚫 This looks like a permissions issue! Check your Monday.com app scopes.');
+      }
+
+      // Fall back to sample data if Monday.com data loading fails
+      const savedEmployees = localStorage.getItem('employees');
+      if (savedEmployees) {
+        setEmployees(JSON.parse(savedEmployees));
+      } else {
+        // Generate sample data if no saved data exists
+        resetToSampleData();
+      }
+    }
+  };
+
+  // Add employee to Monday.com board
+  const addEmployeeToMonday = async (employeeData, boardIdToUse) => {
+    if (!boardIdToUse) {
+      console.warn('⚠️ No board ID available for adding employee to Monday.com');
+      return null;
+    }
+
+    try {
+      // First, try to create a simple item with just the name
+      console.log('📝 Step 1: Creating employee item with name only');
+      const createMutation = `
+        mutation {
+          create_item (
+            board_id: ${boardIdToUse},
+            item_name: "${employeeData.name.replace(/"/g, '\\"')}"
+          ) {
+            id
+          }
+        }
+      `;
+
+      console.log('🔧 Create mutation:', createMutation);
+      const createResponse = await monday.api(createMutation);
+      console.log('📡 Create response:', createResponse);
+
+      if (!createResponse?.data?.create_item?.id) {
+        console.error('❌ Failed to create employee item in Monday.com');
+        console.error('❌ Create response:', createResponse);
+        return null;
+      }
+
+      const itemId = createResponse.data.create_item.id;
+      console.log('✅ Employee item created with ID:', itemId);
+
+      // Now try to update with column data if we have mappings
+      console.log('📝 Step 2: Checking for column mappings and data to update');
+      console.log('🎯 Current column mappings:', columnMappings);
+
+      // Prepare column values using detected column mappings
+      const columnValues = {};
+
+      console.log('📋 Preparing column values for:', employeeData.name);
+      console.log('🎯 Available mappings:', columnMappings);
+      console.log('📊 Employee data:', {
+        position: employeeData.position,
+        department: employeeData.department,
+        email: employeeData.email,
+        phone: employeeData.phone,
+        managerId: employeeData.managerId
+      });
+
+      // Debug: Show what column types we're working with
+      console.log('🔧 Column type analysis:');
+      Object.entries(columnMappings).forEach(([field, columnId]) => {
+        if (columnId) {
+          // Note: We can't access column types here, but we can show the mapping
+          console.log(`   ${field}: ${columnId}`);
+        }
+      });
+
+      // Position column
+      if (employeeData.position && columnMappings.position) {
+        columnValues[columnMappings.position] = employeeData.position;
+        console.log('✅ Added position:', employeeData.position, 'to column', columnMappings.position);
+      } else {
+        console.log('❌ Position not added - position:', `"${employeeData.position}"`, 'mapping:', columnMappings.position);
+      }
+
+      // Department column
+      if (employeeData.department && columnMappings.department) {
+        columnValues[columnMappings.department] = employeeData.department;
+        console.log('✅ Added department:', employeeData.department, 'to column', columnMappings.department);
+      } else {
+        console.log('❌ Department not added - department:', `"${employeeData.department}"`, 'mapping:', columnMappings.department);
+      }
+
+      // Email column
+      if (employeeData.email && columnMappings.email) {
+        columnValues[columnMappings.email] = employeeData.email;
+        console.log('✅ Added email:', employeeData.email, 'to column', columnMappings.email);
+      } else {
+        console.log('❌ Email not added - email:', `"${employeeData.email}"`, 'mapping:', columnMappings.email);
+      }
+
+      // Phone column
+      if (employeeData.phone && columnMappings.phone) {
+        columnValues[columnMappings.phone] = employeeData.phone;
+        console.log('✅ Added phone:', employeeData.phone, 'to column', columnMappings.phone);
+      } else {
+        console.log('❌ Phone not added - phone:', `"${employeeData.phone}"`, 'mapping:', columnMappings.phone);
+      }
+
+      // Manager column - try to find manager by name
+      if (employeeData.managerId && columnMappings.manager) {
+        console.log('🔍 Looking for manager with ID:', employeeData.managerId, 'in employees array of length:', employees.length);
+
+        // Try different ID formats (string vs number)
+        let manager = employees.find(emp => emp.id === employeeData.managerId);
+        if (!manager && typeof employeeData.managerId === 'string') {
+          manager = employees.find(emp => emp.id === parseInt(employeeData.managerId));
+        }
+        if (!manager && typeof employeeData.managerId === 'number') {
+          manager = employees.find(emp => emp.id === employeeData.managerId.toString());
+        }
+
+        if (manager) {
+          columnValues[columnMappings.manager] = manager.name;
+          console.log('✅ Added manager:', manager.name, 'to column', columnMappings.manager);
+        } else {
+          console.log('❌ Manager not found for ID:', employeeData.managerId, '- available employee IDs:', employees.slice(0, 5).map(emp => emp.id));
+          // Still add the mapping with a placeholder or skip
+          console.log('⚠️ Manager lookup failed - skipping manager mapping');
+        }
+      } else {
+        console.log('❌ Manager not added - managerId:', employeeData.managerId, 'mapping:', columnMappings.manager);
+      }
+
+      console.log('📋 Column values to update:', columnValues);
+      console.log('🔍 Available column mappings:', columnMappings);
+
+      // Update columns with actual values
+        if (Object.keys(columnValues).length > 0) {
+          console.log('🔄 Updating columns with bulk update...');
+
+          // Prepare bulk update data
+          const bulkUpdateData = {};
+          Object.entries(columnValues).forEach(([columnId, value]) => {
+            if (columnId.includes('email')) {
+              // Email columns require JSON format: {"email": "email", "text": "name"}
+              bulkUpdateData[columnId] = {
+                email: value,
+                text: employeeData.name || value
+              };
+            } else {
+              // Text, dropdown, and other columns use plain strings
+              bulkUpdateData[columnId] = value;
+            }
+          });
+
+          console.log('📦 Bulk update data:', bulkUpdateData);
+
+          const bulkUpdateMutation = `
+            mutation {
+              change_multiple_column_values (
+                item_id: ${itemId},
+                board_id: ${boardIdToUse},
+                column_values: "${JSON.stringify(bulkUpdateData).replace(/"/g, '\\"')}"
+              ) {
+                id
+              }
+            }
+          `;
+
+          console.log('🔧 Bulk update mutation:', bulkUpdateMutation);
+
+          try {
+            const bulkUpdateResponse = await monday.api(bulkUpdateMutation);
+            console.log('📡 Bulk update response:', bulkUpdateResponse);
+
+            if (bulkUpdateResponse?.data?.change_multiple_column_values?.id) {
+              console.log('✅ Successfully updated all columns with bulk update');
+            } else {
+              console.warn('⚠️ Bulk update failed');
+              console.warn('❌ Bulk update response details:', bulkUpdateResponse);
+            }
+          } catch (bulkError) {
+            console.warn('⚠️ Error with bulk update:', bulkError);
+          }
+        } else {
+          console.log('⚠️ No column values to update - check if column mappings are working');
+        }
+
+      console.log('✅ Employee successfully added to Monday.com with ID:', itemId);
+      return parseInt(itemId);
+
+    } catch (error) {
+      console.error('❌ Error adding employee to Monday.com:', error);
+      console.error('❌ Error details:', error.message);
+      return null;
+    }
+  };
+
+  // Delete employee from Monday.com board
+  const deleteEmployeeFromMonday = async (employeeId, boardIdToUse) => {
+    if (!boardIdToUse) {
+      console.warn('⚠️ No board ID available for deleting employee from Monday.com');
+      return false;
+    }
+
+    try {
+      // Create mutation to delete item from board
+      const mutation = `
+        mutation {
+          delete_item (item_id: ${employeeId}) {
+            id
+          }
+        }
+      `;
+
+      console.log('🗑️ Deleting employee from Monday.com:', employeeId);
+
+      const response = await monday.api(mutation);
+
+      if (response?.data?.delete_item?.id) {
+        console.log('✅ Employee deleted from Monday.com:', response.data.delete_item.id);
+        return true;
+      } else {
+        console.error('❌ Failed to delete employee from Monday.com:', response);
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error deleting employee from Monday.com:', error);
+      return false;
+    }
+  };
+
+  const toggleTheme = () => {
+    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+  };
+
+  const toggleImportExportMenu = () => {
+    setShowImportExportMenu(!showImportExportMenu);
+  };
+
+  const handleDropdownMouseEnter = () => {
+    setShowImportExportMenu(true);
+  };
+
+  const handleDropdownContainerMouseLeave = () => {
+    setShowImportExportMenu(false);
+  };
+
+  const handleViewDropdownMouseEnter = () => {
+    setShowViewMenu(true);
+  };
+
+  const handleViewDropdownContainerMouseLeave = () => {
+    setShowViewMenu(false);
+  };
+
+  const handleSettingsDropdownMouseEnter = () => {
+    setShowSettingsMenu(true);
+  };
+
+  const handleSettingsDropdownContainerMouseLeave = () => {
+    setShowSettingsMenu(false);
+  };
+
+  const openSettingsModal = (section = 'field-management') => {
+    setActiveSettingsSection(section);
+    setShowSettingsModal(true);
+    setShowSettingsMenu(false);
+  };
+
+  const closeSettingsModal = () => {
+    setShowSettingsModal(false);
+  };
+
+  const handleSettingsTabChange = (section) => {
+    setActiveSettingsSection(section);
+  };
+
+  const openViewPopup = (employee) => {
+    setViewedEmployee(employee);
+    setShowViewPopup(true);
+  };
+
+  const closeViewPopup = () => {
+    setShowViewPopup(false);
+    setViewedEmployee(null);
+  };
+
+  const handleContextMenu = (event) => {
+    event.preventDefault();
+    setContextMenuPosition({ x: event.clientX, y: event.clientY });
+    setShowContextMenu(true);
+  };
+
+  const closeContextMenu = () => {
+    setShowContextMenu(false);
+  };
+
+  const handleAddEmployeeFromContext = () => {
+    setShowContextMenu(false);
+    handleAddNew();
+  };
+
+  const handleSettingsFromContext = () => {
+    setShowContextMenu(false);
+            openSettingsModal('field-management');
+  };
+
+  const tourSteps = [
+    {
+      target: 'body',
+      title: 'Welcome to OrgChart Pro',
+      content: 'Welcome to the ultimate organizational chart management solution. This powerful tool helps you visualize and manage your team structure with ease.',
+      position: 'center',
+      isIntro: true
+    },
+    {
+      target: 'body',
+      title: 'Developed by Syncoora',
+      content: 'This application is proudly developed by Syncoora. For support, feedback, or inquiries, reach out to us at team@syncoora.com',
+      position: 'center',
+      isIntro: true
+    },
+    {
+      target: '.add-employee-btn',
+      title: 'Add Employee',
+      content: 'Click here to add new employees to your organization. This opens a form where you can enter employee details including custom fields.',
+      position: 'bottom'
+    },
+    {
+      target: '.view-dropdown-container',
+      title: 'Switch Views',
+      content: 'Switch between Chart View (visual hierarchy) and List View (tabular data) to see your organization in different formats.',
+      position: 'bottom'
+    },
+    {
+      target: '.data-dropdown-container',
+      title: 'Data Management',
+      content: 'Import/Export your employee data. You can backup your data as CSV or PDF files, or import from CSV.',
+      position: 'bottom'
+    },
+    {
+      target: '.settings-dropdown-container',
+      title: 'Settings',
+      content: 'Access settings to manage custom fields, design preferences, and other application configurations.',
+      position: 'bottom'
+    },
+    {
+      target: '.app-main',
+      title: 'Main Content Area',
+      content: 'This is where your organizational chart or employee list is displayed. Right-click anywhere here for quick access to main functions.',
+      position: 'top'
+    }
+  ];
+
+  const handleAppNavigatorFromContext = () => {
+    setShowContextMenu(false);
+    setShowAppNavigator(true);
+    setCurrentTourStep(0);
+  };
+
+  const nextTourStep = () => {
+    if (currentTourStep < tourSteps.length - 1) {
+      setCurrentTourStep(currentTourStep + 1);
+    } else {
+      setShowAppNavigator(false);
+      setCurrentTourStep(0);
+    }
+  };
+
+  const prevTourStep = () => {
+    if (currentTourStep > 0) {
+      setCurrentTourStep(currentTourStep - 1);
+    }
+  };
+
+  const closeTour = () => {
+    setShowAppNavigator(false);
+    setCurrentTourStep(0);
+  };
+
+  const addEmployee = async (employeeData) => {
+    // Create employee locally first
+    const tempId = Date.now();
+    const newEmployee = {
+      ...employeeData,
+      id: tempId,
+      managerId: employeeData.managerId ? parseInt(employeeData.managerId) : null
+    };
+
+    // Add to local state immediately for UI responsiveness
+    setEmployees([...employees, newEmployee]);
+    setShowForm(false);
+    setSelectedEmployee(null);
+
+    // If connected to Monday.com, sync the employee
+    if (!isStandaloneMode && boardId) {
+      try {
+        console.log('🔄 Syncing employee to Monday.com:', employeeData.name);
+        const mondayId = await addEmployeeToMonday(employeeData, boardId);
+
+        if (mondayId) {
+          // Update the employee with the real Monday.com ID
+          setEmployees(prevEmployees =>
+            prevEmployees.map(emp =>
+              emp.id === tempId
+                ? { ...emp, id: mondayId }
+                : emp
+            )
+          );
+
+          // Save updated employees to localStorage
+          setTimeout(() => {
+            setEmployees(currentEmployees => {
+              const updatedEmployees = currentEmployees.map(emp =>
+                emp.id === tempId
+                  ? { ...emp, id: mondayId }
+                  : emp
+              );
+              localStorage.setItem('employees', JSON.stringify(updatedEmployees));
+              return updatedEmployees;
+            });
+          }, 100);
+        } else {
+          console.warn('⚠️ Employee added locally but failed to sync to Monday.com');
+        }
+      } catch (error) {
+        console.error('❌ Error syncing employee to Monday.com:', error);
+      }
+    } else {
+      // Save to localStorage if not syncing to Monday.com
+      localStorage.setItem('employees', JSON.stringify([...employees, newEmployee]));
+    }
+  };
+
+  const updateEmployee = async (employeeData) => {
+    // Find the original employee to compare changes
+    const originalEmployee = employees.find(emp => emp.id === selectedEmployee.id);
+
+    // Update locally first
+    const updatedEmployee = {
+      ...employeeData,
+      id: selectedEmployee.id,
+      managerId: employeeData.managerId ? parseInt(employeeData.managerId) : null
+    };
+
+    const updatedEmployees = employees.map(emp =>
+      emp.id === selectedEmployee.id ? updatedEmployee : emp
+    );
+    setEmployees(updatedEmployees);
+    setShowForm(false);
+    setSelectedEmployee(null);
+
+    // Sync changes to Monday.com if connected
+    if (!isStandaloneMode && boardId && originalEmployee) {
+      try {
+        console.log('🔄 Syncing employee update to Monday.com:', updatedEmployee.name);
+        console.log('👤 Original employee:', {
+          name: originalEmployee.name,
+          position: originalEmployee.position,
+          department: originalEmployee.department,
+          email: originalEmployee.email,
+          phone: originalEmployee.phone,
+          managerId: originalEmployee.managerId
+        });
+        console.log('✨ Updated employee:', {
+          name: updatedEmployee.name,
+          position: updatedEmployee.position,
+          department: updatedEmployee.department,
+          email: updatedEmployee.email,
+          phone: updatedEmployee.phone,
+          managerId: updatedEmployee.managerId
+        });
+        console.log('🗺️ Column mappings:', columnMappings);
+
+        // Identify changed fields
+        const changedFields = {};
+
+        if (updatedEmployee.name !== originalEmployee.name) {
+          console.log('📝 Name changed from:', originalEmployee.name, 'to:', updatedEmployee.name);
+        }
+
+        console.log('🔍 Comparing position:', originalEmployee.position, 'vs', updatedEmployee.position, '- equal?', updatedEmployee.position === originalEmployee.position);
+        if (updatedEmployee.position !== originalEmployee.position) {
+          console.log('📝 Position changed from:', originalEmployee.position, 'to:', updatedEmployee.position);
+          if (columnMappings.position) {
+            changedFields[columnMappings.position] = updatedEmployee.position;
+            console.log('✅ Will update position column:', columnMappings.position);
+          } else {
+            console.log('❌ No position column mapping found');
+          }
+        }
+
+        console.log('🔍 Comparing department:', originalEmployee.department, 'vs', updatedEmployee.department, '- equal?', updatedEmployee.department === originalEmployee.department);
+        if (updatedEmployee.department !== originalEmployee.department) {
+          console.log('📝 Department changed from:', originalEmployee.department, 'to:', updatedEmployee.department);
+          if (columnMappings.department) {
+            changedFields[columnMappings.department] = updatedEmployee.department;
+            console.log('✅ Will update department column:', columnMappings.department);
+          } else {
+            console.log('❌ No department column mapping found');
+          }
+        }
+
+        console.log('🔍 Comparing email:', originalEmployee.email, 'vs', updatedEmployee.email, '- equal?', updatedEmployee.email === originalEmployee.email);
+        if (updatedEmployee.email !== originalEmployee.email) {
+          console.log('📝 Email changed from:', originalEmployee.email, 'to:', updatedEmployee.email);
+          if (columnMappings.email) {
+            changedFields[columnMappings.email] = updatedEmployee.email;
+            console.log('✅ Will update email column:', columnMappings.email);
+          } else {
+            console.log('❌ No email column mapping found');
+          }
+        }
+
+        console.log('🔍 Comparing phone:', originalEmployee.phone, 'vs', updatedEmployee.phone, '- equal?', updatedEmployee.phone === originalEmployee.phone);
+        if (updatedEmployee.phone !== originalEmployee.phone) {
+          console.log('📝 Phone changed from:', originalEmployee.phone, 'to:', updatedEmployee.phone);
+          if (columnMappings.phone) {
+            changedFields[columnMappings.phone] = updatedEmployee.phone;
+            console.log('✅ Will update phone column:', columnMappings.phone);
+          } else {
+            console.log('❌ No phone column mapping found');
+          }
+        }
+
+        // Check if manager changed
+        console.log('🔍 Comparing managerId:', originalEmployee.managerId, 'vs', updatedEmployee.managerId, '- equal?', updatedEmployee.managerId === originalEmployee.managerId);
+        if (updatedEmployee.managerId !== originalEmployee.managerId) {
+          const newManager = employees.find(emp => emp.id === updatedEmployee.managerId);
+          const oldManager = employees.find(emp => emp.id === originalEmployee.managerId);
+
+          console.log('📝 Manager changed from:', oldManager?.name || 'None', 'to:', newManager?.name || 'None');
+
+          if (newManager?.name !== oldManager?.name && columnMappings.manager) {
+            changedFields[columnMappings.manager] = newManager?.name || '';
+            console.log('✅ Will update manager column:', columnMappings.manager);
+          } else if (columnMappings.manager) {
+            console.log('❌ Manager names are the same or no manager column mapping');
+          } else {
+            console.log('❌ No manager column mapping found');
+          }
+        }
+
+        // Update changed fields in Monday.com
+        if (Object.keys(changedFields).length > 0) {
+          console.log('📋 Fields to update in Monday.com:', changedFields);
+          console.log('🔢 Number of fields to update:', Object.keys(changedFields).length);
+
+          // Prepare bulk update data
+          const bulkUpdateData = {};
+          Object.entries(changedFields).forEach(([columnId, value]) => {
+            if (columnId.includes('email')) {
+              // Email columns require JSON format: {"email": "email", "text": "name"}
+              bulkUpdateData[columnId] = {
+                email: value,
+                text: updatedEmployee.name || value
+              };
+            } else {
+              // Text, dropdown, and other columns use plain strings
+              bulkUpdateData[columnId] = value;
+            }
+          });
+
+          console.log('📦 Bulk update data:', bulkUpdateData);
+
+          const bulkUpdateMutation = `
+            mutation {
+              change_multiple_column_values (
+                item_id: ${selectedEmployee.id},
+                board_id: ${boardId},
+                column_values: "${JSON.stringify(bulkUpdateData).replace(/"/g, '\\"')}"
+              ) {
+                id
+              }
+            }
+          `;
+
+          console.log('🔧 Bulk update mutation:', bulkUpdateMutation.trim());
+
+          try {
+            const bulkUpdateResponse = await monday.api(bulkUpdateMutation);
+            console.log('📡 Bulk update response:', bulkUpdateResponse);
+
+            if (bulkUpdateResponse?.data?.change_multiple_column_values?.id) {
+              console.log('✅ Successfully updated all columns with bulk update');
+            } else {
+              console.warn('⚠️ Bulk update failed');
+              console.warn('❌ Bulk update response details:', bulkUpdateResponse);
+            }
+          } catch (bulkError) {
+            console.warn('⚠️ Error with bulk update:', bulkError);
+            console.warn('❌ Bulk error details:', bulkError.message);
+          }
+        }
+
+        // Note: Item names in Monday.com cannot be updated after creation
+        // The item_name parameter is only used during creation
+        if (updatedEmployee.name !== originalEmployee.name) {
+          console.log('ℹ️ Name changed but cannot be updated in Monday.com (names are set during creation only)');
+        }
+
+        console.log('✅ Employee update synced to Monday.com');
+
+      } catch (error) {
+        console.error('❌ Error syncing employee update to Monday.com:', error);
+      }
+    }
+
+    // Save to localStorage
+    localStorage.setItem('employees', JSON.stringify(updatedEmployees));
+  };
+
+  const confirmDeleteEmployee = (employeeId) => {
+    const employee = employees.find(emp => emp.id === employeeId);
+    setEmployeeToDelete(employee);
+    setShowDeleteConfirm(true);
+  };
+
+  const deleteEmployee = async (employeeId) => {
+    // Check if employee has subordinates
+    const hasSubordinates = employees.some(emp => emp.managerId === employeeId);
+
+    if (hasSubordinates) {
+      const employee = employees.find(emp => emp.id === employeeId);
+      const subordinates = employees.filter(emp => emp.managerId === employeeId);
+      setEmployeeWithSubordinates({ employee, subordinates });
+      setShowSubordinatesError(true);
+      setShowDeleteConfirm(false);
+      setEmployeeToDelete(null);
+      return;
+    }
+
+    // Remove from local state immediately for UI responsiveness
+    const updatedEmployees = employees.filter(emp => emp.id !== employeeId);
+    setEmployees(updatedEmployees);
+    setSelectedEmployee(null);
+    setShowDeleteConfirm(false);
+    setEmployeeToDelete(null);
+
+    // If connected to Monday.com, sync the deletion
+    if (!isStandaloneMode && boardId) {
+      try {
+        console.log('🔄 Syncing employee deletion to Monday.com:', employeeId);
+        const success = await deleteEmployeeFromMonday(employeeId, boardId);
+
+        if (!success) {
+          console.warn('⚠️ Employee deleted locally but failed to sync deletion to Monday.com');
+          // Could potentially restore the employee locally here if needed
+        }
+      } catch (error) {
+        console.error('❌ Error syncing employee deletion to Monday.com:', error);
+      }
+    }
+
+    // Save updated employees to localStorage
+    localStorage.setItem('employees', JSON.stringify(updatedEmployees));
+  };
+
+  const closeSubordinatesError = () => {
+    setShowSubordinatesError(false);
+    setEmployeeWithSubordinates(null);
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteConfirm(false);
+    setEmployeeToDelete(null);
+  };
+
+  const handleEditEmployee = (employee) => {
+    setSelectedEmployee(employee);
+    setShowForm(true);
+  };
+
+  const handleAddNew = () => {
+    setSelectedEmployee(null);
+    setShowForm(true);
+  };
+
+  const handleCloseForm = () => {
+    setShowForm(false);
+    setSelectedEmployee(null);
+  };
+
+  const handleImportEmployees = (importedEmployees) => {
+    setEmployees(importedEmployees);
+  };
+
+  const resetToSampleData = () => {
+    // Generate 20 sample employees
+    const generateSampleEmployees = () => {
+      const names = [
+        'John Smith', 'Sarah Johnson', 'Mike Davis', 'Lisa Chen', 'David Wilson',
+        'Emma Wilson', 'James Brown', 'Sophia Davis', 'Michael Johnson', 'Olivia Garcia',
+        'Daniel Miller', 'Ava Rodriguez', 'Christopher Martinez', 'Isabella Anderson', 'Matthew Taylor',
+        'Mia Thomas', 'Andrew Jackson', 'Charlotte White', 'Joshua Harris', 'Amelia Martin',
+        'Ryan Thompson', 'Harper Garcia', 'Nicholas Moore', 'Evelyn Lee', 'Christopher Clark',
+        'Grace Lewis', 'Kevin Hall', 'Chloe Allen', 'Steven Young', 'Zoe King',
+        'Brian Wright', 'Lily Green', 'Timothy Baker', 'Hannah Adams', 'Jeffrey Nelson',
+        'Victoria Carter', 'Mark Mitchell', 'Penelope Perez', 'Donald Roberts', 'Layla Turner',
+        'Paul Phillips', 'Riley Campbell', 'George Parker', 'Nora Evans', 'Edward Edwards',
+        'Scarlett Collins', 'Robert Stewart', 'Aria Morris', 'Thomas Rogers', 'Luna Reed'
+      ];
+
+      const positions = [
+        'CEO', 'CTO', 'CFO', 'COO', 'VP of Engineering', 'VP of Marketing', 'VP of Sales', 'VP of HR',
+        'Senior Software Engineer', 'Software Engineer', 'Frontend Developer', 'Backend Developer', 'Full Stack Developer',
+        'Product Manager', 'Project Manager', 'Scrum Master', 'Business Analyst', 'Data Analyst',
+        'UX Designer', 'UI Designer', 'Graphic Designer', 'Marketing Manager', 'Marketing Specialist',
+        'Sales Manager', 'Sales Representative', 'Account Executive', 'Customer Success Manager',
+        'HR Manager', 'HR Coordinator', 'Recruiter', 'Finance Manager', 'Financial Analyst',
+        'Accountant', 'Operations Manager', 'Operations Specialist', 'DevOps Engineer',
+        'QA Engineer', 'Technical Lead', 'Architect', 'Database Administrator', 'System Administrator',
+        'Content Strategist', 'SEO Specialist', 'Social Media Manager', 'Brand Manager',
+        'Legal Counsel', 'Compliance Officer', 'Security Engineer', 'Network Engineer', 'Support Engineer'
+      ];
+
+      const departments = [
+        'Executive', 'Technology', 'Engineering', 'Product', 'Design', 'Marketing', 'Sales', 
+        'Human Resources', 'Finance', 'Operations', 'Customer Success', 'Business Development', 
+        'Research & Development', 'Legal', 'Security', 'Support'
+      ];
+
+      const employees = [];
+      
+      // Create CEO (no manager)
+      employees.push({
+        id: 1,
+        name: names[0],
+        position: 'CEO',
+        department: 'Executive',
+        email: `${names[0].toLowerCase().replace(' ', '.')}@company.com`,
+        phone: `+1-555-${String(100 + 1).padStart(3, '0')}-${String(1000 + 1).padStart(4, '0')}`,
+        managerId: null,
+        image: null
+      });
+
+      // Create C-level executives (report to CEO)
+      const cLevelPositions = ['CTO', 'CFO', 'COO'];
+      for (let i = 0; i < cLevelPositions.length; i++) {
+        employees.push({
+          id: i + 2,
+          name: names[i + 1],
+          position: cLevelPositions[i],
+          department: cLevelPositions[i] === 'CTO' ? 'Technology' : cLevelPositions[i] === 'CFO' ? 'Finance' : 'Operations',
+          email: `${names[i + 1].toLowerCase().replace(' ', '.')}@company.com`,
+          phone: `+1-555-${String(100 + i + 2).padStart(3, '0')}-${String(1000 + i + 2).padStart(4, '0')}`,
+          managerId: 1,
+          image: null
+        });
+      }
+
+      // Create VPs (report to C-level)
+      const vpPositions = ['VP of Engineering', 'VP of Marketing', 'VP of Sales', 'VP of HR'];
+      const vpDepartments = ['Technology', 'Marketing', 'Sales', 'Human Resources'];
+      for (let i = 0; i < vpPositions.length; i++) {
+        const managerId = i < 2 ? 2 : i < 3 ? 3 : 4; // CTO, CTO, CFO, COO
+        employees.push({
+          id: i + 5,
+          name: names[i + 4],
+          position: vpPositions[i],
+          department: vpDepartments[i],
+          email: `${names[i + 4].toLowerCase().replace(' ', '.')}@company.com`,
+          phone: `+1-555-${String(100 + i + 5).padStart(3, '0')}-${String(1000 + i + 5).padStart(4, '0')}`,
+          managerId: managerId,
+          image: null
+        });
+      }
+
+      // Create remaining employees (report to VPs and other managers)
+      let currentId = 9;
+      for (let i = 9; i < 21; i++) {
+        const name = names[i];
+        const position = positions[Math.floor(Math.random() * positions.length)];
+        const department = departments[Math.floor(Math.random() * departments.length)];
+        
+        // Assign manager based on department and hierarchy
+        let managerId;
+        if (department === 'Technology' || department === 'Engineering') {
+          managerId = Math.random() > 0.5 ? 2 : 5; // CTO or VP Engineering
+        } else if (department === 'Marketing') {
+          managerId = 6; // VP Marketing
+        } else if (department === 'Sales') {
+          managerId = 7; // VP Sales
+        } else if (department === 'Human Resources') {
+          managerId = 8; // VP HR
+        } else if (department === 'Finance') {
+          managerId = 3; // CFO
+        } else if (department === 'Operations') {
+          managerId = 4; // COO
+        } else {
+          // For other departments, randomly assign to existing managers
+          const existingManagers = employees.filter(emp => 
+            emp.position.includes('VP') || emp.position.includes('Manager') || emp.position.includes('Lead')
+          );
+          if (existingManagers.length > 0) {
+            managerId = existingManagers[Math.floor(Math.random() * existingManagers.length)].id;
+          } else {
+            managerId = 1; // Default to CEO
+          }
+        }
+
+        employees.push({
+          id: currentId,
+          name: name,
+          position: position,
+          department: department,
+          email: `${name.toLowerCase().replace(' ', '.')}@company.com`,
+          phone: `+1-555-${String(100 + currentId).padStart(3, '0')}-${String(1000 + currentId).padStart(4, '0')}`,
+          managerId: managerId,
+          image: null
+        });
+        currentId++;
+      }
+
+      return employees;
+    };
+
+    const sampleEmployees = generateSampleEmployees();
+    setEmployees(sampleEmployees);
+    setSelectedEmployee(null);
+  };
+
+  return (
+    <div className="App">
+      <header className="app-header">
+        <div className="header-content">
+          <h1>Organizational Chart {isStandaloneMode && <span className="standalone-badge">Standalone Mode</span>}</h1>
+          <div className="header-actions">
+            <div className="dropdown-container view-dropdown-container" ref={viewDropdownRef} onMouseLeave={handleViewDropdownContainerMouseLeave}>
+              <button 
+                className="dropdown-trigger"
+                onClick={() => setShowViewMenu(!showViewMenu)}
+                onMouseEnter={handleViewDropdownMouseEnter}
+              >
+                {viewMode === 'chart' ? <Users size={20} /> : <Settings size={20} />}
+                {viewMode === 'chart' ? 'Chart View' : 'List View'}
+              </button>
+              
+              {showViewMenu && (
+                <div 
+                  className="dropdown-menu"
+                  onMouseEnter={handleViewDropdownMouseEnter}
+                >
+                  <div className="dropdown-menu-content">
+                    <div className="menu-section">
+                      <h4>View Mode</h4>
+                      <button 
+                        className={`menu-item ${viewMode === 'chart' ? 'active' : ''}`}
+                        onClick={() => {
+                          setViewMode('chart');
+                          setShowViewMenu(false);
+                        }}
+                      >
+                        <Users size={16} />
+                        Chart View
+                      </button>
+                      <button 
+                        className={`menu-item ${viewMode === 'list' ? 'active' : ''}`}
+                        onClick={() => {
+                          setViewMode('list');
+                          setShowViewMenu(false);
+                        }}
+                      >
+                        <Settings size={16} />
+                        List View
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button className="add-employee-btn" onClick={handleAddNew}>
+              <Plus size={20} />
+              Add Employee
+            </button>
+            
+            <div className="dropdown-container data-dropdown-container" ref={dropdownRef} onMouseLeave={handleDropdownContainerMouseLeave}>
+              <button 
+                className="dropdown-trigger"
+                onClick={toggleImportExportMenu}
+                onMouseEnter={handleDropdownMouseEnter}
+              >
+                <Download size={20} />
+                Data
+              </button>
+              
+              {showImportExportMenu && (
+                <div 
+                  className="dropdown-menu"
+                  onMouseEnter={handleDropdownMouseEnter}
+                >
+                  <ImportExport 
+                    employees={employees}
+                    onImportEmployees={handleImportEmployees}
+                    onResetToSample={resetToSampleData}
+                    isDropdown={true}
+                    orgChartRef={orgChartRef}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="dropdown-container settings-dropdown-container" ref={settingsDropdownRef} onMouseLeave={handleSettingsDropdownContainerMouseLeave}>
+              <button 
+                className="dropdown-trigger"
+                onClick={() => openSettingsModal('field-management')}
+                onMouseEnter={handleSettingsDropdownMouseEnter}
+              >
+                <SettingsIcon size={20} />
+                Settings
+              </button>
+              
+              {showSettingsMenu && (
+                <div 
+                  className="dropdown-menu"
+                  onMouseEnter={handleSettingsDropdownMouseEnter}
+                >
+                  <div className="dropdown-menu-content">
+                    <div className="menu-section">
+                      <h4>Fields & Forms</h4>
+                      <button 
+                        className="menu-item"
+                        onClick={() => openSettingsModal('field-management')}
+                      >
+                        <List size={16} />
+                        Field Management
+                      </button>
+                    </div>
+                    <div className="menu-section">
+                      <h4>Appearance</h4>
+                      <button 
+                        className="menu-item"
+                        onClick={() => openSettingsModal('designer')}
+                      >
+                        <Palette size={16} />
+                        Designer
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button 
+              className={`theme-toggle-switch ${theme === 'dark' ? 'active' : ''}`} 
+              onClick={toggleTheme}
+              title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+            >
+              <div className="toggle-slider">
+                {theme === 'light' ? <Sun size={12} /> : <Moon size={12} />}
+              </div>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="app-main">
+        {showForm && (
+          <div className="form-overlay">
+            <div className="form-container">
+              <EmployeeForm
+                employee={selectedEmployee}
+                employees={employees}
+                onSubmit={selectedEmployee ? updateEmployee : addEmployee}
+                onCancel={handleCloseForm}
+              />
+            </div>
+          </div>
+        )}
+
+        {viewMode === 'chart' ? (
+          <div className="org-chart-container" ref={orgChartRef}>
+            <OrgChart
+              employees={employees}
+              onEditEmployee={handleEditEmployee}
+              onDeleteEmployee={confirmDeleteEmployee}
+              onViewEmployee={openViewPopup}
+              isStandaloneMode={isStandaloneMode}
+              mondayDataLoaded={mondayDataLoaded}
+              designSettings={designSettings}
+            />
+          </div>
+        ) : (
+          <div className="employee-list-container">
+            <EmployeeList
+              employees={employees}
+              onEditEmployee={handleEditEmployee}
+              onDeleteEmployee={confirmDeleteEmployee}
+              onViewEmployee={openViewPopup}
+            />
+          </div>
+        )}
+
+        <Settings
+          isOpen={showSettingsModal}
+          onClose={closeSettingsModal}
+          activeSection={activeSettingsSection}
+          onTabChange={handleSettingsTabChange}
+          designSettings={designSettings}
+          onDesignSettingsChange={setDesignSettings}
+        />
+
+        {/* Employee View Popup */}
+        {showViewPopup && viewedEmployee && (
+          <div className="view-popup-overlay">
+            <div className="view-popup">
+              <div className="view-popup-header">
+                <div className="employee-avatar">
+                  {viewedEmployee.image ? (
+                    <img src={viewedEmployee.image} alt={viewedEmployee.name} />
+                  ) : (
+                    <div className="avatar-placeholder">
+                      {viewedEmployee.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                  )}
+                </div>
+                <div className="employee-header-info">
+                  <h2>{viewedEmployee.name}</h2>
+                  <p className="position">{viewedEmployee.position}</p>
+                  <span className="department-badge">{viewedEmployee.department}</span>
+                </div>
+                <div className="view-popup-header-actions">
+                  <button 
+                    className="edit-view-btn" 
+                    onClick={() => {
+                      closeViewPopup();
+                      handleEditEmployee(viewedEmployee);
+                    }}
+                    title="Edit Employee"
+                  >
+                    <Edit size={20} />
+                  </button>
+                  <button className="close-view-btn" onClick={closeViewPopup}>
+                    <X size={24} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="view-popup-content">
+                <div className="info-section">
+                  <h3>Contact Information</h3>
+                  <div className="info-grid">
+                    <div className="info-item">
+                      <label>Email</label>
+                      <span>{viewedEmployee.email}</span>
+                    </div>
+                    <div className="info-item">
+                      <label>Phone</label>
+                      <span>{viewedEmployee.phone}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="info-section">
+                  <h3>Organizational Details</h3>
+                  <div className="info-grid">
+                    <div className="info-item">
+                      <label>Manager</label>
+                      <span>
+                        {viewedEmployee.managerId ? 
+                          employees.find(emp => emp.id === viewedEmployee.managerId)?.name || 'Unknown' 
+                          : 'No Manager'
+                        }
+                      </span>
+                    </div>
+                    <div className="info-item">
+                      <label>Direct Reports</label>
+                      <span>
+                        {employees.filter(emp => emp.managerId === viewedEmployee.id).length} employees
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Custom Fields Section */}
+                {(() => {
+                  const customFields = JSON.parse(localStorage.getItem('customFields') || '[]');
+                  const hasCustomFields = customFields.length > 0;
+                  
+                  if (hasCustomFields) {
+                    return (
+                      <div className="info-section">
+                        <h3>Additional Information</h3>
+                        <div className="info-grid">
+                          {customFields.map(field => (
+                            <div key={field.id} className="info-item">
+                              <label>{field.name}</label>
+                              <span>
+                                {viewedEmployee[field.name] || '-'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+
+              <div className="view-popup-actions">
+                <button className="edit-employee-btn" onClick={() => {
+                  closeViewPopup();
+                  handleEditEmployee(viewedEmployee);
+                }}>
+                  <Edit size={16} />
+                  Edit Employee
+                </button>
+                <button className="delete-employee-btn" onClick={() => {
+                  closeViewPopup();
+                  confirmDeleteEmployee(viewedEmployee.id);
+                }}>
+                  <Trash2 size={16} />
+                  Delete Employee
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Context Menu */}
+        {showContextMenu && (
+          <div 
+            className="context-menu-overlay"
+            onClick={closeContextMenu}
+          >
+            <div 
+              className="context-menu"
+              style={{
+                left: contextMenuPosition.x,
+                top: contextMenuPosition.y
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+                           <button 
+               className="context-menu-item"
+               onClick={handleAddEmployeeFromContext}
+             >
+               <Plus size={16} />
+               Add Employee
+             </button>
+             <button 
+               className="context-menu-item"
+               onClick={handleSettingsFromContext}
+             >
+               <SettingsIcon size={16} />
+               Settings
+             </button>
+             <button 
+               className="context-menu-item"
+               onClick={handleAppNavigatorFromContext}
+             >
+               <List size={16} />
+               Product Tour
+             </button>
+            </div>
+          </div>
+        )}
+
+        {/* App Navigator Tour */}
+        {showAppNavigator && (
+          <div className="tour-overlay">
+            {!tourSteps[currentTourStep]?.isIntro && (
+              <div className="tour-highlight" style={{
+                left: document.querySelector(tourSteps[currentTourStep]?.target)?.getBoundingClientRect().left || 0,
+                top: document.querySelector(tourSteps[currentTourStep]?.target)?.getBoundingClientRect().top || 0,
+                width: document.querySelector(tourSteps[currentTourStep]?.target)?.offsetWidth || 0,
+                height: document.querySelector(tourSteps[currentTourStep]?.target)?.offsetHeight || 0
+              }}></div>
+            )}
+            
+            <div className={`tour-tooltip ${tourSteps[currentTourStep]?.isIntro ? 'tour-tooltip-intro' : 'tour-tooltip-center'}`}>
+              <div className="tour-header">
+                <h3>{tourSteps[currentTourStep]?.title}</h3>
+                <button className="tour-close" onClick={closeTour}>
+                  <X size={20} />
+                </button>
+              </div>
+              <p>{tourSteps[currentTourStep]?.content}</p>
+              <div className="tour-navigation">
+                <button 
+                  className="tour-nav-btn tour-nav-arrow"
+                  onClick={prevTourStep}
+                  disabled={currentTourStep === 0}
+                  title="Previous"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <div className="tour-progress">
+                  {currentTourStep + 1} of {tourSteps.length}
+                </div>
+                <button 
+                  className="tour-nav-btn tour-nav-arrow"
+                  onClick={nextTourStep}
+                  title={currentTourStep === tourSteps.length - 1 ? 'Finish' : 'Next'}
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Popup */}
+        {showDeleteConfirm && employeeToDelete && (
+          <div className="delete-confirm-overlay">
+            <div className="delete-confirm-modal">
+              <div className="delete-confirm-header">
+                <h3>Delete Employee</h3>
+                <button className="close-btn" onClick={cancelDelete}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="delete-confirm-content">
+                <div className="delete-warning">
+                  <Trash2 size={48} />
+                  <h4>Are you sure you want to delete this employee?</h4>
+                  <p>
+                    This action cannot be undone. The employee <strong>{employeeToDelete.name}</strong> will be permanently removed from the organization.
+                  </p>
+                </div>
+                <div className="delete-confirm-actions">
+                  <button className="cancel-btn" onClick={cancelDelete}>
+                    Cancel
+                  </button>
+                  <button 
+                    className="delete-btn" 
+                    onClick={() => deleteEmployee(employeeToDelete.id)}
+                  >
+                    <Trash2 size={16} />
+                    Delete Employee
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Subordinates Error Popup */}
+        {showSubordinatesError && employeeWithSubordinates && (
+          <div className="delete-confirm-overlay">
+            <div className="delete-confirm-modal subordinates-error-modal">
+              <div className="delete-confirm-header">
+                <h3>Cannot Delete Employee</h3>
+                <button className="close-btn" onClick={closeSubordinatesError}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="delete-confirm-content">
+                <div className="subordinates-warning">
+                  <Users size={48} />
+                  <h4>Employee has subordinates</h4>
+                  <p>
+                    <strong>{employeeWithSubordinates.employee.name}</strong> cannot be deleted because they have <strong>{employeeWithSubordinates.subordinates.length} subordinate(s)</strong> reporting to them.
+                  </p>
+                  <div className="subordinates-list">
+                    <h5>Subordinates:</h5>
+                    <ul>
+                      {employeeWithSubordinates.subordinates.map(sub => (
+                        <li key={sub.id}>
+                          <span className="subordinate-name">{sub.name}</span>
+                          <span className="subordinate-position">{sub.position}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <p className="subordinates-help">
+                    To delete this employee, you must first either:
+                    <br />• Reassign their subordinates to another manager, or
+                    <br />• Delete the subordinates first
+                  </p>
+                </div>
+                <div className="delete-confirm-actions">
+                  <button className="cancel-btn" onClick={closeSubordinatesError}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;

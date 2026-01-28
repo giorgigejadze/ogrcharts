@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Trash2, Palette, List, Save, Edit, ChevronUp, ChevronDown } from 'lucide-react';
 import './Settings.css';
+import mondaySdk from "monday-sdk-js";
+const monday = mondaySdk();
 
-const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings, onDesignSettingsChange }) => {
+const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings, onDesignSettingsChange, boardId, isStandaloneMode }) => {
   const [customFields, setCustomFields] = useState([]);
 
   // Use designSettings from props, with fallback to defaults
@@ -56,56 +58,126 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
   const [inlineOptionValue, setInlineOptionValue] = useState('');
   const [isAddingForNewField, setIsAddingForNewField] = useState(true);
   const [selectedFieldIndex, setSelectedFieldIndex] = useState(null);
+  
+  // Ref to track current customFields for polling
+  const customFieldsRef = useRef([]);
 
   // Load existing settings from localStorage on component mount
   React.useEffect(() => {
-    const savedCustomFields = localStorage.getItem('customFields');
-    const savedDesignSettings = localStorage.getItem('designSettings');
-    const savedDefaultFields = localStorage.getItem('defaultFields');
-    const savedRequiredFields = localStorage.getItem('requiredFields');
-    
-    if (savedCustomFields) {
-      setCustomFields(JSON.parse(savedCustomFields));
-    }
-    
-    if (savedDesignSettings) {
-      const parsedSettings = JSON.parse(savedDesignSettings);
-      // Merge with default settings to ensure new properties are included
-      const defaultDesignSettings = {
-        cardStyle: 'rounded',
-        avatarSize: 'medium',
-        showContactInfo: true,
-        showDepartment: true,
-        primaryColor: '#2563eb',
-        secondaryColor: '#64748b',
-        edgeType: 'straight',
-        edgeColor: '#3b82f6',
-        edgeWidth: 3
-      };
-      // Update parent's state with merged settings
-      if (onDesignSettingsChange) {
-        onDesignSettingsChange({ ...defaultDesignSettings, ...parsedSettings });
+    const loadSettings = () => {
+      const savedCustomFields = localStorage.getItem('customFields');
+      const savedDesignSettings = localStorage.getItem('designSettings');
+      const savedDefaultFields = localStorage.getItem('defaultFields');
+      const savedRequiredFields = localStorage.getItem('requiredFields');
+      
+      if (savedCustomFields) {
+        const parsedFields = JSON.parse(savedCustomFields);
+        setCustomFields(parsedFields);
       }
-    }
+      
+      if (savedDesignSettings) {
+        const parsedSettings = JSON.parse(savedDesignSettings);
+        // Merge with default settings to ensure new properties are included
+        const defaultDesignSettings = {
+          cardStyle: 'rounded',
+          avatarSize: 'medium',
+          showContactInfo: true,
+          showDepartment: true,
+          primaryColor: '#2563eb',
+          secondaryColor: '#64748b',
+          edgeType: 'straight',
+          edgeColor: '#3b82f6',
+          edgeWidth: 3
+        };
+        // Update parent's state with merged settings
+        if (onDesignSettingsChange) {
+          onDesignSettingsChange({ ...defaultDesignSettings, ...parsedSettings });
+        }
+      }
 
-    if (savedDefaultFields) {
-      setDefaultFields(JSON.parse(savedDefaultFields));
-    }
+      if (savedDefaultFields) {
+        setDefaultFields(JSON.parse(savedDefaultFields));
+      }
 
-    if (savedRequiredFields) {
-      setRequiredFields(JSON.parse(savedRequiredFields));
-    } else {
-      // Default required fields if no settings exist
-      setRequiredFields({
-        name: true,
-        position: true,
-        department: true,
-        email: true,
-        phone: true,
-        managerId: false
-      });
-    }
-  }, []);
+      if (savedRequiredFields) {
+        setRequiredFields(JSON.parse(savedRequiredFields));
+      } else {
+        // Default required fields if no settings exist
+        setRequiredFields({
+          name: true,
+          position: true,
+          department: true,
+          email: true,
+          phone: true,
+          managerId: false
+        });
+      }
+    };
+
+    // Load settings on mount
+    loadSettings();
+
+    // Listen for storage events (when localStorage changes from other tabs/windows)
+    const handleStorageChange = (e) => {
+      if (e.key === 'customFields' || e.key === 'defaultFields' || e.key === 'requiredFields') {
+        loadSettings();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // Poll for localStorage changes (for same-tab changes)
+    const pollInterval = setInterval(() => {
+      const savedCustomFields = localStorage.getItem('customFields');
+      if (savedCustomFields) {
+        const parsedFields = JSON.parse(savedCustomFields);
+        // Check if fields have changed using ref
+        const currentFieldsStr = JSON.stringify(customFieldsRef.current);
+        const newFieldsStr = JSON.stringify(parsedFields);
+        if (currentFieldsStr !== newFieldsStr) {
+          console.log('🔄 Detected new custom fields in localStorage, auto-updating...');
+          customFieldsRef.current = parsedFields;
+          setCustomFields(parsedFields);
+          
+          // Auto-update defaultFields to include new fields
+          const savedDefaultFields = localStorage.getItem('defaultFields');
+          const currentDefaultFields = savedDefaultFields ? JSON.parse(savedDefaultFields) : {};
+          const savedRequiredFields = localStorage.getItem('requiredFields');
+          const currentRequiredFields = savedRequiredFields ? JSON.parse(savedRequiredFields) : {};
+          
+          let updatedDefaultFields = { ...currentDefaultFields };
+          let updatedRequiredFields = { ...currentRequiredFields };
+          let hasChanges = false;
+          
+          parsedFields.forEach(field => {
+            if (!(field.name in updatedDefaultFields)) {
+              updatedDefaultFields[field.name] = true; // Default to enabled
+              updatedRequiredFields[field.name] = field.required || false;
+              hasChanges = true;
+              console.log(`✅ Auto-added new field "${field.name}" to defaultFields`);
+            }
+          });
+          
+          if (hasChanges) {
+            localStorage.setItem('defaultFields', JSON.stringify(updatedDefaultFields));
+            localStorage.setItem('requiredFields', JSON.stringify(updatedRequiredFields));
+            setDefaultFields(updatedDefaultFields);
+            setRequiredFields(updatedRequiredFields);
+            console.log('✅ Auto-updated defaultFields and requiredFields with new custom fields');
+          }
+        }
+      }
+    }, 500); // Check every 500ms
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(pollInterval);
+    };
+  }, [onDesignSettingsChange]);
+  
+  // Update ref when customFields changes
+  useEffect(() => {
+    customFieldsRef.current = customFields;
+  }, [customFields]);
 
   // Update default fields when custom fields change
   React.useEffect(() => {
@@ -138,17 +210,97 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
     setRequiredFields(updatedRequiredFields);
   }, [customFields]);
 
-  const addCustomField = () => {
+  // Map custom field types to Monday.com column types
+  const mapFieldTypeToMondayColumnType = (fieldType) => {
+    const typeMap = {
+      'text': 'text',
+      'email': 'email',
+      'phone': 'phone',
+      'number': 'numbers',
+      'date': 'date',
+      'dropdown': 'dropdown'
+    };
+    return typeMap[fieldType] || 'text';
+  };
+
+  const addCustomField = async () => {
     if (isFieldReadyToAdd()) {
       
       const newFieldWithId = { ...newField, id: Date.now() };
-      setCustomFields([...customFields, newFieldWithId]);
+      
+      // Add to Monday.com board if connected
+      if (!isStandaloneMode && boardId) {
+        try {
+          console.log('📋 Adding custom field to Monday.com:', newField.name, 'type:', newField.type);
+          
+          const mondayColumnType = mapFieldTypeToMondayColumnType(newField.type);
+          
+          // Prepare column creation mutation
+          // Note: column_type is an enum, not a string, so no quotes needed
+          let createColumnMutation = `
+            mutation {
+              create_column(
+                board_id: ${boardId},
+                title: "${newField.name.replace(/"/g, '\\"')}",
+                column_type: ${mondayColumnType}
+              ) {
+                id
+                title
+                type
+              }
+            }
+          `;
+
+          // For dropdown columns, add options if available
+          if (newField.type === 'dropdown' && newField.options && newField.options.length > 0) {
+            // Note: Dropdown options are set after column creation using change_column_value
+            // We'll create the column first, then update it with options if needed
+            console.log('📋 Dropdown field with options:', newField.options);
+          }
+
+          const response = await monday.api(createColumnMutation);
+          console.log('✅ Column created in Monday.com:', response);
+
+          if (response?.data?.create_column?.id) {
+            const newColumnId = response.data.create_column.id;
+            console.log('✅ Successfully added column to Monday.com:', newColumnId);
+            
+            // Save column mapping to localStorage
+            const savedColumnMappings = JSON.parse(localStorage.getItem('columnMappings') || '{}');
+            savedColumnMappings[newField.name] = newColumnId;
+            localStorage.setItem('columnMappings', JSON.stringify(savedColumnMappings));
+            console.log('💾 Saved custom field column mapping:', newField.name, '->', newColumnId);
+            
+            // If dropdown with options, update column settings
+            if (newField.type === 'dropdown' && newField.options && newField.options.length > 0) {
+              // Note: Setting dropdown options requires additional API calls
+              // For now, we'll just create the column and options can be set manually in Monday.com
+              console.log('ℹ️ Dropdown column created. Options can be set in Monday.com UI.');
+            }
+          } else {
+            console.warn('⚠️ Column creation response missing ID:', response);
+          }
+        } catch (error) {
+          console.error('❌ Error adding column to Monday.com:', error);
+          console.error('❌ Error details:', error.message);
+          // Continue with local field addition even if Monday.com sync fails
+        }
+      }
+
+      // Add to local state
+      const updatedCustomFields = [...customFields, newFieldWithId];
+      setCustomFields(updatedCustomFields);
 
       // Update required fields to sync with the new custom field's required property
-      setRequiredFields(prev => ({
-        ...prev,
+      const updatedRequiredFields = {
+        ...requiredFields,
         [newField.name]: newField.required
-      }));
+      };
+      setRequiredFields(updatedRequiredFields);
+
+      // Save to localStorage immediately
+      localStorage.setItem('customFields', JSON.stringify(updatedCustomFields));
+      localStorage.setItem('requiredFields', JSON.stringify(updatedRequiredFields));
 
       setNewField({ name: '', type: 'text', required: false, options: [] });
     }
@@ -193,8 +345,49 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
     setShowDeleteConfirm(true);
   };
 
-  const removeCustomField = () => {
+  const removeCustomField = async () => {
     if (fieldToDelete) {
+      // Delete column from Monday.com if connected
+      if (!isStandaloneMode && boardId) {
+        try {
+          // Get column ID from localStorage mappings
+          const savedColumnMappings = JSON.parse(localStorage.getItem('columnMappings') || '{}');
+          const columnId = savedColumnMappings[fieldToDelete.name];
+          
+          if (columnId) {
+            console.log('🗑️ Deleting column from Monday.com:', fieldToDelete.name, 'column ID:', columnId);
+            
+            const deleteColumnMutation = `
+              mutation {
+                delete_column(
+                  board_id: ${boardId},
+                  column_id: "${columnId}"
+                ) {
+                  id
+                  title
+                }
+              }
+            `;
+            
+            const response = await monday.api(deleteColumnMutation);
+            console.log('✅ Column deleted from Monday.com:', response);
+            
+            // Remove column mapping from localStorage
+            const updatedColumnMappings = { ...savedColumnMappings };
+            delete updatedColumnMappings[fieldToDelete.name];
+            localStorage.setItem('columnMappings', JSON.stringify(updatedColumnMappings));
+            console.log('💾 Removed column mapping from localStorage:', fieldToDelete.name);
+          } else {
+            console.log('⚠️ Column mapping not found for field:', fieldToDelete.name);
+          }
+        } catch (error) {
+          console.error('❌ Error deleting column from Monday.com:', error);
+          console.error('❌ Error details:', error.message);
+          // Continue with local field deletion even if Monday.com sync fails
+        }
+      }
+      
+      // Remove from local state
       setCustomFields(customFields.filter(field => field.id !== fieldToDelete.id));
       
       // Remove the field from required fields as well
@@ -203,6 +396,17 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
         delete updated[fieldToDelete.name];
         return updated;
       });
+      
+      // Remove from default fields
+      const savedDefaultFields = JSON.parse(localStorage.getItem('defaultFields') || '{}');
+      const updatedDefaultFields = { ...savedDefaultFields };
+      delete updatedDefaultFields[fieldToDelete.name];
+      localStorage.setItem('defaultFields', JSON.stringify(updatedDefaultFields));
+      
+      // Remove from localStorage
+      const updatedCustomFields = customFields.filter(field => field.id !== fieldToDelete.id);
+      localStorage.setItem('customFields', JSON.stringify(updatedCustomFields));
+      localStorage.setItem('requiredFields', JSON.stringify({ ...requiredFields, [fieldToDelete.name]: undefined }));
       
       setFieldToDelete(null);
       setShowDeleteConfirm(false);
