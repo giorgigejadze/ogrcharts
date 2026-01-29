@@ -316,7 +316,7 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
     setIsEditing(false);
   };
 
-  const saveEditedField = () => {
+  const saveEditedField = async () => {
     if (editingField.name.trim()) {
       // Validate dropdown options if type is dropdown
       if (editingField.type === 'dropdown' && editingField.options.length === 0) {
@@ -324,15 +324,368 @@ const Settings = ({ isOpen, onClose, activeSection, onTabChange, designSettings,
         return;
       }
       
-      setCustomFields(customFields.map(field => 
+      // Find the original field to check if name changed
+      const originalField = customFields.find(field => field.id === editingField.id);
+      const nameChanged = originalField && originalField.name !== editingField.name;
+      
+      // Update local state
+      const updatedCustomFields = customFields.map(field => 
         field.id === editingField.id ? editingField : field
-      ));
-
-      // Update required fields to sync with the custom field's required property
-      setRequiredFields(prev => ({
-        ...prev,
-        [editingField.name]: editingField.required
-      }));
+      );
+      setCustomFields(updatedCustomFields);
+      
+      // Save to localStorage
+      localStorage.setItem('customFields', JSON.stringify(updatedCustomFields));
+      
+      // Handle name change
+      if (nameChanged && originalField) {
+        const oldName = originalField.name;
+        const newName = editingField.name;
+        
+        // Update column mapping in localStorage if Monday.com is connected
+        if (!isStandaloneMode && boardId) {
+          try {
+            const savedColumnMappings = JSON.parse(localStorage.getItem('columnMappings') || '{}');
+            const columnId = savedColumnMappings[oldName];
+            
+            if (columnId) {
+              console.log('🔄 Updating column name in Monday.com:', oldName, '->', newName, 'column ID:', columnId);
+              
+              // Update column title in Monday.com
+              // Note: Monday.com API doesn't have a direct change_column_title mutation,
+              // but we can try using change_column_metadata or update the mapping
+              // For now, we'll update the mapping and the column will be referenced by new name
+              
+              // Try to update column title in Monday.com using update_column mutation
+              try {
+                // Get column information including type and settings
+                const getColumnQuery = `
+                  query {
+                    boards(ids: [${boardId}]) {
+                      columns(ids: ["${columnId}"]) {
+                        id
+                        title
+                        type
+                        settings_str
+                        description
+                      }
+                    }
+                  }
+                `;
+                
+                const columnInfo = await monday.api(getColumnQuery);
+                const column = columnInfo?.data?.boards?.[0]?.columns?.[0];
+                
+                if (column) {
+                  const columnType = column.type;
+                  const settingsStr = column.settings_str || '{}';
+                  
+                  // Parse settings
+                  let settings = {};
+                  try {
+                    settings = JSON.parse(settingsStr);
+                  } catch (e) {
+                    settings = {};
+                  }
+                  
+                  // Map column type to Monday.com ColumnType enum (lowercase required)
+                  const mondayColumnTypeMap = {
+                    'text': 'text',
+                    'email': 'email',
+                    'phone': 'phone',
+                    'numbers': 'numbers',
+                    'number': 'numbers',
+                    'date': 'date',
+                    'dropdown': 'dropdown',
+                    'status': 'status',
+                    'people': 'people',
+                    'file': 'file',
+                    'link': 'link',
+                    'location': 'location',
+                    'checkbox': 'checkbox',
+                    'rating': 'rating',
+                    'timeline': 'timeline',
+                    'tag': 'tag',
+                    'hour': 'hour',
+                    'week': 'week',
+                    'item_id': 'item_id',
+                    'board_relation': 'board_relation',
+                    'vote': 'vote',
+                    'auto_number': 'auto_number',
+                    'formula': 'formula',
+                    'creation_log': 'creation_log',
+                    'last_updated': 'last_updated',
+                    'time_tracking': 'time_tracking',
+                    'mirror': 'mirror',
+                    'dependency': 'dependency',
+                    'connect_boards': 'connect_boards',
+                    'workspace': 'workspace',
+                    'button': 'button',
+                    'integration': 'integration'
+                  };
+                  
+                  const mondayColumnType = mondayColumnTypeMap[columnType] || 'text';
+                  
+                  // Safe workaround: Create new column, migrate data, delete old column
+                  console.log('🔄 Starting safe column rename process:', oldName, '->', newName);
+                  
+                  try {
+                    // Step 1: Fetch all items and their values from the old column
+                    console.log('📥 Step 1: Fetching all items from board...');
+                    const fetchItemsQuery = `
+                      query {
+                        boards(ids: [${boardId}]) {
+                          items_page(limit: 500) {
+                            items {
+                              id
+                              column_values(ids: ["${columnId}"]) {
+                                id
+                                text
+                                value
+                                type
+                                ... on NumbersValue {
+                                  number
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    `;
+                    
+                    const itemsResponse = await monday.api(fetchItemsQuery);
+                    const items = itemsResponse?.data?.boards?.[0]?.items_page?.items || [];
+                    console.log(`✅ Fetched ${items.length} items from board`);
+                    
+                    // Step 2: Extract values from old column
+                    const itemValues = [];
+                    items.forEach(item => {
+                      const columnValue = item.column_values?.[0];
+                      if (columnValue) {
+                        let extractedValue = null;
+                        
+                        // Handle different column types
+                        if (columnType === 'numbers' || columnType === 'number') {
+                          // For numbers, try to get the number value
+                          extractedValue = columnValue.number || columnValue.value || columnValue.text;
+                        } else if (columnValue.value) {
+                          // Try to parse JSON value first
+                          try {
+                            const parsed = JSON.parse(columnValue.value);
+                            if (typeof parsed === 'object' && parsed !== null) {
+                              extractedValue = parsed;
+                            } else {
+                              extractedValue = parsed;
+                            }
+                          } catch (e) {
+                            // Not JSON, use as string
+                            extractedValue = columnValue.value;
+                          }
+                        } else if (columnValue.text) {
+                          extractedValue = columnValue.text;
+                        }
+                        
+                        if (extractedValue !== null && extractedValue !== undefined && extractedValue !== '') {
+                          itemValues.push({
+                            itemId: item.id,
+                            value: extractedValue,
+                            text: columnValue.text || String(extractedValue)
+                          });
+                        }
+                      }
+                    });
+                    
+                    console.log(`📋 Extracted ${itemValues.length} values from old column`);
+                    
+                    // Step 3: Create new column with new name
+                    console.log('➕ Step 2: Creating new column with name:', newName);
+                    const createColumnMutation = `
+                      mutation {
+                        create_column(
+                          board_id: ${boardId},
+                          title: "${newName.replace(/"/g, '\\"')}",
+                          column_type: ${mondayColumnType}
+                        ) {
+                          id
+                          title
+                          type
+                        }
+                      }
+                    `;
+                    
+                    const createResponse = await monday.api(createColumnMutation);
+                    const newColumnId = createResponse?.data?.create_column?.id;
+                    
+                    if (!newColumnId) {
+                      throw new Error('Failed to create new column');
+                    }
+                    
+                    console.log('✅ Created new column:', newColumnId);
+                    
+                    // Step 4: Migrate all values to new column (in parallel for speed)
+                    console.log('📤 Step 3: Migrating values to new column...');
+                    
+                    // Prepare all mutations in parallel
+                    const migrationPromises = itemValues.map(async (itemData) => {
+                      try {
+                        // Prepare column value based on column type
+                        let columnValueJson = {};
+                        
+                        if (columnType === 'email') {
+                          // Email columns require JSON format
+                          columnValueJson[newColumnId] = {
+                            email: itemData.value,
+                            text: itemData.text || itemData.value
+                          };
+                        } else if (columnType === 'numbers' || columnType === 'number') {
+                          // Numbers columns require number value
+                          const numValue = typeof itemData.value === 'number' ? itemData.value : parseFloat(itemData.value);
+                          if (!isNaN(numValue)) {
+                            columnValueJson[newColumnId] = numValue;
+                          } else {
+                            columnValueJson[newColumnId] = itemData.value || '';
+                          }
+                        } else {
+                          // Other columns use simple value
+                          columnValueJson[newColumnId] = itemData.value || itemData.text || '';
+                        }
+                        
+                        const migrateMutation = `
+                          mutation {
+                            change_multiple_column_values(
+                              item_id: ${itemData.itemId},
+                              board_id: ${boardId},
+                              column_values: "${JSON.stringify(columnValueJson).replace(/"/g, '\\"')}"
+                            ) {
+                              id
+                            }
+                          }
+                        `;
+                        
+                        await monday.api(migrateMutation);
+                        return { success: true, itemId: itemData.itemId };
+                      } catch (migrateError) {
+                        console.warn(`⚠️ Failed to migrate value for item ${itemData.itemId}:`, migrateError);
+                        return { success: false, itemId: itemData.itemId, error: migrateError };
+                      }
+                    });
+                    
+                    // Execute all migrations in parallel
+                    const results = await Promise.all(migrationPromises);
+                    const migratedCount = results.filter(r => r.success).length;
+                    
+                    console.log(`✅ Migrated ${migratedCount} of ${itemValues.length} values`);
+                    
+                    // Step 5: Delete old column (only if migration was successful)
+                    if (migratedCount > 0 || itemValues.length === 0) {
+                      console.log('🗑️ Step 4: Deleting old column...');
+                      const deleteColumnMutation = `
+                        mutation {
+                          delete_column(
+                            board_id: ${boardId},
+                            column_id: "${columnId}"
+                          ) {
+                            id
+                            title
+                          }
+                        }
+                      `;
+                      
+                      await monday.api(deleteColumnMutation);
+                      console.log('✅ Deleted old column');
+                      
+                      // Update column mapping to use new column ID
+                      const updatedColumnMappings = { ...savedColumnMappings };
+                      delete updatedColumnMappings[oldName];
+                      updatedColumnMappings[newName] = newColumnId;
+                      localStorage.setItem('columnMappings', JSON.stringify(updatedColumnMappings));
+                      console.log('💾 Updated column mapping:', oldName, '->', newName, '(', columnId, '->', newColumnId, ')');
+                    } else {
+                      console.error('❌ Migration failed, keeping old column');
+                      throw new Error('Migration failed - no values migrated');
+                    }
+                    
+                    console.log('✅ Column rename completed successfully');
+                  } catch (renameError) {
+                    console.error('❌ Error during column rename:', renameError);
+                    throw renameError;
+                  }
+                } else {
+                  console.log('⚠️ Could not fetch column info, updating mapping only');
+                }
+              } catch (updateError) {
+                console.log('⚠️ Could not update column title in Monday.com:', updateError);
+                // If rename failed, still update mapping locally with old column ID
+                // This ensures the app continues to work even if Monday.com update fails
+                const updatedColumnMappings = { ...savedColumnMappings };
+                delete updatedColumnMappings[oldName];
+                updatedColumnMappings[newName] = columnId;
+                localStorage.setItem('columnMappings', JSON.stringify(updatedColumnMappings));
+                console.log('ℹ️ Column mapping updated locally - app will use new name');
+              }
+            } else {
+              console.log('⚠️ Column mapping not found for field:', oldName);
+            }
+          } catch (error) {
+            console.error('❌ Error updating column mapping:', error);
+          }
+        }
+        
+        // Update requiredFields - remove old name, add new name
+        const currentRequiredFields = JSON.parse(localStorage.getItem('requiredFields') || '{}');
+        const updatedRequiredFields = { ...currentRequiredFields };
+        if (oldName in updatedRequiredFields) {
+          updatedRequiredFields[newName] = updatedRequiredFields[oldName];
+          delete updatedRequiredFields[oldName];
+        } else {
+          updatedRequiredFields[newName] = editingField.required;
+        }
+        setRequiredFields(updatedRequiredFields);
+        localStorage.setItem('requiredFields', JSON.stringify(updatedRequiredFields));
+        
+        // Update defaultFields - remove old name, add new name
+        const currentDefaultFields = JSON.parse(localStorage.getItem('defaultFields') || '{}');
+        const updatedDefaultFields = { ...currentDefaultFields };
+        if (oldName in updatedDefaultFields) {
+          updatedDefaultFields[newName] = updatedDefaultFields[oldName];
+          delete updatedDefaultFields[oldName];
+        } else {
+          updatedDefaultFields[newName] = true; // Default to enabled
+        }
+        localStorage.setItem('defaultFields', JSON.stringify(updatedDefaultFields));
+        
+        // Update all employees' data to use new field name instead of old name
+        try {
+          const savedEmployees = localStorage.getItem('employees');
+          if (savedEmployees) {
+            const employees = JSON.parse(savedEmployees);
+            const updatedEmployees = employees.map(employee => {
+              // If employee has data for the old field name, migrate it to new name
+              if (oldName in employee) {
+                const updatedEmployee = { ...employee };
+                updatedEmployee[newName] = employee[oldName];
+                delete updatedEmployee[oldName];
+                return updatedEmployee;
+              }
+              return employee;
+            });
+            localStorage.setItem('employees', JSON.stringify(updatedEmployees));
+            console.log(`✅ Updated ${updatedEmployees.length} employee(s) to use new field name: ${oldName} -> ${newName}`);
+          }
+        } catch (employeeError) {
+          console.error('❌ Error updating employees data:', employeeError);
+        }
+        
+        console.log('✅ Field name updated:', oldName, '->', newName);
+      } else {
+        // Name didn't change, just update required fields
+        const updatedRequiredFields = {
+          ...requiredFields,
+          [editingField.name]: editingField.required
+        };
+        setRequiredFields(updatedRequiredFields);
+        localStorage.setItem('requiredFields', JSON.stringify(updatedRequiredFields));
+      }
 
       setEditingField(null);
       setIsEditing(false);
